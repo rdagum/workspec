@@ -1,0 +1,18 @@
+name: WorkSpec Demo Board
+description: Reference implementation demo — a small auth/payments product
+spec_version: 1.0
+settings:
+  card_fields:
+    - id
+    - title
+    - type
+    - priority
+    - assignee
+sort:
+  fields:
+    - created
+    - updated
+    - priority
+  default:
+    field: updated
+    direction: desc

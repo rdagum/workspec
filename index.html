@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The app makes no network requests by design (PROMPT.md §12); it runs
+         from file:// so a restrictive CSP meta is intentionally omitted to avoid
+         file-scheme origin quirks. -->
+    <title>WorkSpec Board</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">▣</span>
+        <span id="board-name" class="brand-title">WorkSpec</span>
+        <span id="repo-name" class="brand-repo"></span>
+      </div>
+      <div class="topbar-actions">
+        <button id="refresh-btn" class="btn-secondary" title="Reload config and items from disk" disabled>↻ Refresh</button>
+        <button id="open-btn" class="btn-primary">Open .workspec folder</button>
+      </div>
+    </header>
+
+    <div class="unsupported-banner">
+      This reference build requires a Chromium browser (Chrome or Edge) with the
+      File System Access API. Other browsers are not supported.
+    </div>
+
+    <main class="layout">
+      <div id="sidebar-mount"></div>
+      <div id="board-mount" class="board-mount"></div>
+      <div id="editor-mount"></div>
+    </main>
+
+    <div id="overlay" class="overlay"></div>
+    <div id="toast" class="toast"></div>
+
+    <!--
+      Classic scripts sharing a global `window.WS` namespace, loaded in
+      dependency order. No ES modules, no bundler — so the page runs by simply
+      opening this file (file://) in a Chromium browser. No backend (PROMPT §3.1).
+    -->
+    <script src="utils/yaml.js"></script>
+    <script src="utils/ids.js"></script>
+    <script src="ui/dom.js"></script>
+    <script src="core/parser.js"></script>
+    <script src="core/model.js"></script>
+    <script src="core/filesystem.js"></script>
+    <script src="state/store.js"></script>
+    <script src="ui/board.js"></script>
+    <script src="ui/editor.js"></script>
+    <script src="ui/sidebar.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
