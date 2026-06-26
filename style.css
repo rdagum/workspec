@@ -199,6 +199,13 @@ button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid t
 .type-spike { background: var(--spike); }
 .card-id { color: var(--text-faint); font-size: 12px; font-family: ui-monospace, monospace; }
 .card-title { font-weight: 500; margin-bottom: 8px; }
+.card-parent {
+  display: inline-block; margin: -2px 0 8px; padding: 1px 4px; border: none;
+  background: none; color: var(--text-faint); font-family: ui-monospace, monospace;
+  font-size: 11px; border-radius: 4px;
+}
+.card-parent:hover:not(:disabled) { color: var(--accent); background: var(--bg); }
+.card-parent.missing { color: var(--danger); cursor: default; opacity: 0.8; }
 .card-meta { display: flex; flex-wrap: wrap; gap: 5px; }
 .pill {
   font-size: 11px; padding: 1px 7px; border-radius: 10px;

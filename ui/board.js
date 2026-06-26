@@ -137,6 +137,26 @@ class BoardView {
     card.append(idLine);
     card.append(el('div', { class: 'card-title', text: String(m.title || '(untitled)') }));
 
+    // Parent breadcrumb (hierarchy context without breaking the status columns).
+    if (m.parent) {
+      const parentId = String(m.parent);
+      const parentPath = `items/${parentId}.md`;
+      const exists = this.store.model.items.has(parentPath);
+      const crumb = el('button', {
+        class: 'card-parent' + (exists ? '' : ' missing'),
+        title: exists ? `Open parent ${parentId}` : `Parent ${parentId} not found`,
+        text: `↳ ${parentId}`,
+      });
+      crumb.disabled = !exists;
+      // Don't let the breadcrumb open this card or start a drag.
+      crumb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (exists) this.onOpenItem(parentPath);
+      });
+      crumb.addEventListener('pointerdown', (e) => e.stopPropagation());
+      card.append(crumb);
+    }
+
     const metaRow = el('div', { class: 'card-meta' });
     if (m.priority) {
       metaRow.append(
