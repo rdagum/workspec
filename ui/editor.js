@@ -22,6 +22,23 @@ const PRIORITIES = ['critical', 'high', 'medium', 'low'];
 // Fields the form shows but does not let the user hand-edit. `id` is immutable
 // (SPEC.md §7.2); `created`/`updated` are managed automatically.
 const READONLY_FIELDS = new Set(['id', 'created', 'updated']);
+
+// Sticky editor view preferences, persisted across page reloads.
+const PREFS_KEY = 'workspec.editor.prefs';
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY)) || {};
+  } catch {
+    return {}; // localStorage unavailable (e.g. private mode) — fall back to defaults
+  }
+}
+function savePrefs(prefs) {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* ignore — preferences just won't persist */
+  }
+}
 // Fields whose values are conventionally arrays — rendered as multiline inputs.
 const ARRAY_FIELDS = new Set([
   'labels', 'depends_on', 'blocks', 'related', 'context',
@@ -32,20 +49,26 @@ class EditorView {
   constructor(store) {
     this.store = store;
     this.root = el('aside', { class: 'editor', id: 'editor' });
-    this.rawMode = false;
-    this.preview = false;
+    const prefs = loadPrefs();
+    this.rawMode = !!prefs.rawMode;
+    this.preview = !!prefs.preview;
     this._dirty = false; // unsaved edits in the working copy
     this._path = null;
   }
 
+  _savePrefs() {
+    savePrefs({ rawMode: this.rawMode, preview: this.preview });
+  }
+
   _bind(record) {
-    // (Re)load working copy when a different item is opened.
+    // (Re)load working copy when a different item is opened. `rawMode` and
+    // `preview` are sticky view preferences — preserved across items so that,
+    // e.g., choosing Markdown "Preview" keeps applying to the next card opened.
     if (this._path !== record.path) {
       this._path = record.path;
       this.meta = JSON.parse(JSON.stringify(record.meta || {}));
       this.body = record.body || '';
-      this.rawMode = false;
-      this.preview = false;
+      this._rawText = null; // per-item raw buffer; rebuild from the new meta
       this._rawError = null;
       this._dirty = false;
     }
@@ -97,6 +120,7 @@ class EditorView {
               if (!this._commitRaw()) return;
             }
             this.rawMode = !this.rawMode;
+            this._savePrefs();
             this.render();
           },
           text: this.rawMode ? 'Form view' : 'Raw YAML',
@@ -255,6 +279,7 @@ class EditorView {
           class: 'btn-mini',
           onclick: () => {
             this.preview = !this.preview;
+            this._savePrefs();
             this.render();
           },
           text: this.preview ? 'Edit' : 'Preview',

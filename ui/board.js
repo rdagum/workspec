@@ -87,8 +87,9 @@ class BoardView {
     const type = String(m.type || '').toUpperCase();
     const hasErrors = record.errors && record.errors.length > 0;
 
+    const selected = this.store.state.selectedPath === record.path;
     const card = el('article', {
-      class: 'card' + (hasErrors ? ' card-error' : ''),
+      class: 'card' + (hasErrors ? ' card-error' : '') + (selected ? ' selected' : ''),
       dataset: { path: record.path },
       tabindex: '0',
       role: 'button',

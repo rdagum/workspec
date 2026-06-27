@@ -54,8 +54,12 @@ let lastMessage = '';
 
 let lastEditorKey;
 store.subscribe((state) => {
-  refs.sidebarMount.replaceChildren(sidebar.render());
+  renderSidebarPreservingFocus();
+  // Rebuilding the board resets scroll; capture and restore it so opening a card
+  // (or saving/moving) doesn't jump the columns back to the top.
+  const scroll = captureBoardScroll();
   refs.boardMount.replaceChildren(board.render());
+  restoreBoardScroll(scroll);
   // Only (re)build the editor when the open item or open/closed state changes.
   // Rebuilding on every emit would destroy the focused input mid-typing; while
   // an item stays open the editor manages its own DOM in place.
@@ -293,6 +297,40 @@ function applyTheme(theme) {
 function sortDefault(model) {
   const d = (model.board && model.board.sort && model.board.sort.default) || {};
   return { field: d.field || '', direction: d.direction === 'asc' ? 'asc' : 'desc' };
+}
+
+// Re-render the sidebar while keeping the search box focused and its caret in
+// place — otherwise live filtering would steal focus on every keystroke.
+function renderSidebarPreservingFocus() {
+  const active = document.activeElement;
+  const wasSearch = active && active.classList && active.classList.contains('search-input');
+  const caret = wasSearch ? [active.selectionStart, active.selectionEnd] : null;
+  refs.sidebarMount.replaceChildren(sidebar.render());
+  if (wasSearch) {
+    const input = refs.sidebarMount.querySelector('.search-input');
+    if (input) {
+      input.focus();
+      if (caret[0] != null) {
+        try { input.setSelectionRange(caret[0], caret[1]); } catch { /* non-text input */ }
+      }
+    }
+  }
+}
+
+// Board scroll preservation across re-render (keyed by column status).
+function captureBoardScroll() {
+  const lists = {};
+  refs.boardMount.querySelectorAll('.column-list').forEach((l) => {
+    lists[l.dataset.status] = l.scrollTop;
+  });
+  return { left: refs.boardMount.scrollLeft, lists };
+}
+function restoreBoardScroll(scroll) {
+  refs.boardMount.scrollLeft = scroll.left;
+  refs.boardMount.querySelectorAll('.column-list').forEach((l) => {
+    const top = scroll.lists[l.dataset.status];
+    if (top != null) l.scrollTop = top;
+  });
 }
 
 // --- Overlay & toast plumbing ----------------------------------------------
