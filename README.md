@@ -92,3 +92,8 @@ The bundled YAML engine implements the subset WorkSpec uses (scalars, quoted
 strings, block/flow sequences, nested mappings, block scalars). Standalone YAML
 comments inside front matter are not preserved across a *metadata* re-serialize;
 a drag/drop status change preserves the file byte-for-byte except the one line.
+
+## License
+
+Released under the [MIT License](LICENSE.md) — free for anyone, including
+commercial use, to use, modify, and distribute.

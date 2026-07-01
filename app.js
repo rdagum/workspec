@@ -7,7 +7,7 @@
 'use strict';
 
 const { WorkspecFS, isSupported } = WS;
-const { loadRepository } = WS;
+const { loadRepository, detailDisplay } = WS;
 const { Store } = WS;
 const { BoardView } = WS;
 const { EditorView } = WS;
@@ -41,11 +41,13 @@ const refs = {
   sidebarMount: document.getElementById('sidebar-mount'),
   editorMount: document.getElementById('editor-mount'),
   overlay: document.getElementById('overlay'),
+  editorBackdrop: document.getElementById('editor-backdrop'),
   toast: document.getElementById('toast'),
   repoName: document.getElementById('repo-name'),
   boardName: document.getElementById('board-name'),
   openBtn: document.getElementById('open-btn'),
   refreshBtn: document.getElementById('refresh-btn'),
+  themeBtn: document.getElementById('theme-btn'),
 };
 
 let lastMessage = '';
@@ -74,6 +76,11 @@ store.subscribe((state) => {
   refs.boardName.textContent = state.model ? state.model.board.name || '' : 'WorkSpec';
   refs.refreshBtn.disabled = !state.fs || state.status === 'loading';
   document.body.classList.toggle('has-editor', !!state.selectedPath);
+  // Item detail layout (side-panel-vertical | side-panel-horizontal | floating).
+  const detailMode = state.model ? detailDisplay(state.model) : 'side-panel-vertical';
+  document.body.dataset.detailDisplay = detailMode;
+  // The floating layout needs a click-to-close backdrop behind the modal.
+  refs.editorBackdrop.classList.toggle('open', detailMode === 'floating' && !!state.selectedPath);
 
   if (state.message && state.message !== lastMessage) {
     showToast(state.message);
@@ -288,9 +295,32 @@ async function renderContextOverlay() {
 
 // --- Preferences -----------------------------------------------------------
 
-// Apply the theme from user.local.yaml. Unknown/missing values fall back to dark.
-function applyTheme(theme) {
+// Theme resolution order: a manual toggle (persisted in localStorage) wins over
+// the repo's user.local.yaml value, which in turn falls back to dark.
+const THEME_KEY = 'workspec.theme';
+function storedTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY);
+  } catch {
+    return null; // localStorage unavailable (e.g. private mode)
+  }
+}
+function setTheme(theme) {
   document.body.dataset.theme = theme === 'light' ? 'light' : 'dark';
+  refs.themeBtn.textContent = theme === 'light' ? '☾' : '☀';
+  refs.themeBtn.title = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+}
+function applyTheme(configTheme) {
+  setTheme(storedTheme() || configTheme || 'dark');
+}
+function toggleTheme() {
+  const next = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+  setTheme(next);
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    /* ignore — the choice just won't persist across reloads */
+  }
 }
 
 // Initial sort from board.yaml's `sort.default` (falls back to unsorted/desc).
@@ -382,6 +412,12 @@ document.addEventListener('keydown', (e) => {
 
 refs.openBtn.addEventListener('click', openRepository);
 refs.refreshBtn.addEventListener('click', refreshRepository);
+refs.themeBtn.addEventListener('click', toggleTheme);
+// Clicking the floating-mode backdrop closes the open item (save-on-close guarded).
+refs.editorBackdrop.addEventListener('click', () => editor.handleEscape());
+
+// Apply any persisted theme immediately, before a repository is opened.
+applyTheme();
 
 // Surface unsupported browsers immediately.
 if (!isSupported()) {

@@ -14,6 +14,15 @@ const SUPPORTED_MAJOR = 1;
 
 const DEFAULT_WORKFLOW = ['Backlog', 'Ready', 'In Progress', 'Review', 'Done'];
 
+// Item detail layouts, configurable via board.yaml `settings.detail_display`.
+const DETAIL_DISPLAY_MODES = ['side-panel-vertical', 'side-panel-horizontal', 'floating'];
+
+/** Chosen detail layout, falling back to the current side-panel-vertical default. */
+function detailDisplay(model) {
+  const v = model && model.board && model.board.settings && model.board.settings.detail_display;
+  return DETAIL_DISPLAY_MODES.includes(v) ? v : 'side-panel-vertical';
+}
+
 function coerceColumns(raw) {
   if (Array.isArray(raw)) return raw.map(String);
   if (raw && Array.isArray(raw.columns)) return raw.columns.map(String);
@@ -211,5 +220,5 @@ function distinctValues(items, field) {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-Object.assign(WS, { SUPPORTED_MAJOR, loadRepository, buildColumns, distinctValues, sortItems });
+Object.assign(WS, { SUPPORTED_MAJOR, loadRepository, buildColumns, distinctValues, sortItems, detailDisplay });
 })(window.WS = window.WS || {});
