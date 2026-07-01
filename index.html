@@ -17,6 +17,7 @@
         <span id="repo-name" class="brand-repo"></span>
       </div>
       <div class="topbar-actions">
+        <button id="theme-btn" class="btn-secondary" title="Toggle light/dark theme">☀</button>
         <button id="refresh-btn" class="btn-secondary" title="Reload config and items from disk" disabled>↻ Refresh</button>
         <button id="open-btn" class="btn-primary">Open .workspec folder</button>
       </div>
@@ -32,6 +33,9 @@
       <div id="board-mount" class="board-mount"></div>
       <div id="editor-mount"></div>
     </main>
+
+    <!-- Dimmed backdrop shown only in floating detail mode; click closes the item. -->
+    <div id="editor-backdrop"></div>
 
     <div id="overlay" class="overlay"></div>
     <div id="toast" class="toast"></div>

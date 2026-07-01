@@ -8,6 +8,9 @@ settings:
     - type
     - priority
     - assignee
+  # detail_display: how the item detail opens.
+  # side-panel-vertical (default) | side-panel-horizontal | floating
+  detail_display: side-panel-vertical
 sort:
   fields:
     - created
