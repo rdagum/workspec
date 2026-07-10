@@ -305,6 +305,25 @@ body[data-detail-display="floating"] .pane-meta {
   border-right: none; border-bottom: 1px solid var(--border);
 }
 
+/* The floating modal shows one pane at a time behind a tab strip, so the pane
+   fills it and loses the divider it only needed when stacked above a sibling. */
+.editor-tabs {
+  display: flex; gap: 2px; padding: 0 10px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+}
+.editor-tabs .tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--text-dim); cursor: pointer; font: inherit; font-size: 12px;
+  padding: 8px 12px; margin-bottom: -1px;
+}
+.editor-tabs .tab:hover { color: var(--text); }
+.editor-tabs .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.editor-panes.tabbed .pane { flex: 1 1 100%; }
+.editor-panes.tabbed .pane-meta { border-bottom: none; }
+/* The tab already names the pane; only the body pane's label earns its row,
+   because it carries the Edit/Preview toggle. */
+.editor-panes.tabbed .pane-meta > .pane-label { display: none; }
+
 /* The horizontal/floating meta pane is full-width, so lay its short fields out
    in two columns; multi-line fields (arrays, nested, long text) stay full width. */
 body[data-detail-display="side-panel-horizontal"] .meta-form,

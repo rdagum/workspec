@@ -3,6 +3,9 @@
 //   Left  — YAML metadata (structured form OR raw YAML toggle)
 //   Right — Markdown body
 //
+// In the `floating` detail display the modal is too short to stack both panes,
+// so the same two panes become tabs and only the active one is built.
+//
 // Typing updates an in-memory working copy and refreshes only the small status
 // strip in place — it never re-renders the editor, so input focus is preserved.
 // Writing to disk is explicit: the Save button (or Ctrl+S), with a save-on-close
@@ -16,6 +19,7 @@
 const { el, clear, renderMarkdown } = WS;
 const { stringifyYaml, parseYaml } = WS;
 const { validateItem, REQUIRED_FIELDS } = WS;
+const { detailDisplay } = WS;
 
 const KNOWN_TYPES = ['EPIC', 'STORY', 'TASK', 'BUG', 'SPIKE'];
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
@@ -52,12 +56,13 @@ class EditorView {
     const prefs = loadPrefs();
     this.rawMode = !!prefs.rawMode;
     this.preview = !!prefs.preview;
+    this.tab = prefs.tab === 'body' ? 'body' : 'meta'; // only used by the floating layout
     this._dirty = false; // unsaved edits in the working copy
     this._path = null;
   }
 
   _savePrefs() {
-    savePrefs({ rawMode: this.rawMode, preview: this.preview });
+    savePrefs({ rawMode: this.rawMode, preview: this.preview, tab: this.tab });
   }
 
   _bind(record) {
@@ -86,9 +91,41 @@ class EditorView {
 
     this.root.append(this._header(record));
     this.root.append(this._validation());
-    const panes = el('div', { class: 'editor-panes' }, [this._metaPane(), this._bodyPane()]);
-    this.root.append(panes);
+    if (detailDisplay(this.store.model) === 'floating') {
+      // Tabs: one pane at a time, so the Markdown body gets the full modal.
+      this.root.append(this._tabs());
+      const pane = this.tab === 'body' ? this._bodyPane() : this._metaPane();
+      this.root.append(el('div', { class: 'editor-panes tabbed' }, [pane]));
+    } else {
+      this.root.append(el('div', { class: 'editor-panes' }, [this._metaPane(), this._bodyPane()]));
+    }
     return this.root;
+  }
+
+  /**
+   * Tab strip for the floating layout. Switching tabs only swaps the rendered
+   * pane — `meta`, `body` and the raw-YAML buffer live on the working copy, so
+   * nothing typed is lost (an invalid raw buffer keeps its error and its text).
+   */
+  _tabs() {
+    const tab = (id, label) =>
+      el('button', {
+        class: 'tab' + (this.tab === id ? ' active' : ''),
+        type: 'button',
+        role: 'tab',
+        'aria-selected': this.tab === id ? 'true' : 'false',
+        onclick: () => {
+          if (this.tab === id) return;
+          this.tab = id;
+          this._savePrefs();
+          this.render();
+        },
+        text: label,
+      });
+    return el('div', { class: 'editor-tabs', role: 'tablist' }, [
+      tab('meta', 'Metadata'),
+      tab('body', 'Markdown'),
+    ]);
   }
 
   _header(record) {

@@ -1,3 +1,270 @@
+# WorkSpec
+
+**Version:** 1.0.0
+
+WorkSpec is a Git-native, AI-first work management system that stores project planning alongside source code.
+
+Instead of relying on external issue trackers or hosted services, WorkSpec keeps work items, project context, templates, and configuration inside the repository. This makes project planning portable, version-controlled, and immediately accessible to both developers and AI coding agents.
+
+WorkSpec defines a specification for representing software work. The included HTML board is the reference implementation of that specification.
+
+---
+
+# Why WorkSpec?
+
+Traditional project management tools separate planning from implementation.
+
+WorkSpec keeps everything together:
+
+* Source code
+* Architecture documentation
+* Project context
+* Work items
+* Templates
+* Workflow configuration
+
+Because everything lives inside the repository, Git becomes the single source of truth for both the software and the work required to build it.
+
+---
+
+# Design Goals
+
+WorkSpec is built around a few simple principles:
+
+* **Git-native** – All project planning lives inside the repository.
+* **AI-first** – Work items are designed to be consumed directly by AI coding agents.
+* **Human-readable** – Every file can be opened and understood in a text editor.
+* **Portable** – Copy the `.workspec` directory to another repository and everything moves with it.
+* **Implementation-independent** – Any application can implement the WorkSpec specification.
+
+---
+
+# Repository Layout
+
+```text
+.workspec/
+│
+├── config/
+│   ├── board.yaml
+│   ├── workflow.yaml
+│   ├── users.yaml
+│   └── user.local.yaml
+│
+├── items/
+│
+├── templates/
+│
+├── context/
+│
+├── assets/
+│
+├── archive/
+│
+└── board/
+```
+
+The `.workspec` directory contains everything required to understand and manage the project.
+
+---
+
+# Work Items
+
+Each work item is stored as a separate Markdown file.
+
+Example:
+
+```text
+.workspec/items/STORY-000123.md
+```
+
+Every work item contains:
+
+* YAML front matter for structured metadata
+* Markdown for detailed documentation
+
+This combination provides deterministic data for tooling while remaining easy for humans to edit.
+
+---
+
+# Supported Work Item Types
+
+WorkSpec v1.0 defines the following item types:
+
+* Epic
+* Story
+* Task
+* Bug
+* Spike
+
+Each item has an immutable ID.
+
+Examples:
+
+```text
+EPIC-000001
+STORY-000123
+TASK-000045
+BUG-000010
+SPIKE-000003
+```
+
+IDs never change, even if the title changes.
+
+---
+
+# Workflow
+
+Workflow is defined in:
+
+```text
+.workspec/config/workflow.yaml
+```
+
+The specification does not prescribe Scrum, Kanban, or any particular methodology.
+
+Projects are free to define their own workflow stages.
+
+Example:
+
+```text
+Backlog
+Ready
+In Progress
+Review
+Done
+```
+
+---
+
+# Context Documents
+
+Project-wide documentation belongs in:
+
+```text
+.workspec/context/
+```
+
+Examples include:
+
+* Architecture
+* Coding Standards
+* API Design
+* Database Design
+* Deployment
+
+Work items reference these documents rather than duplicating information.
+
+---
+
+# Templates
+
+Templates reside in:
+
+```text
+.workspec/templates/
+```
+
+Templates provide the starting point for new work items and help ensure consistency across the project.
+
+---
+
+# AI Integration
+
+WorkSpec is designed to work naturally with AI coding agents.
+
+The repository includes:
+
+* `SPEC.md` – Defines the WorkSpec specification.
+* `SKILL.md` – Defines how AI agents should operate on WorkSpec repositories.
+
+A compliant AI agent should:
+
+1. Read `SPEC.md`.
+2. Load `SKILL.md`.
+3. Locate the requested work item.
+4. Load referenced context.
+5. Produce an implementation plan.
+6. Implement the requested changes.
+7. Update the work item status.
+
+---
+
+# Reference Implementation
+
+The HTML board is a reference implementation of the WorkSpec specification.
+
+Its responsibilities are intentionally limited:
+
+* Browse work items
+* Search and filter
+* Edit metadata
+* Edit Markdown
+* Create work items
+* Move work items between workflow states
+
+The board is **not** the source of truth.
+
+The files are.
+
+---
+
+# Git Philosophy
+
+WorkSpec intentionally relies on Git for:
+
+* Version history
+* Authorship
+* Change tracking
+* Repository synchronization
+
+WorkSpec does not duplicate these capabilities.
+
+---
+
+# Getting Started
+
+1. Clone your repository.
+2. Add the `.workspec` directory to the repository root.
+3. Configure `board.yaml` and `workflow.yaml`.
+4. Create your first work item from a template.
+5. Open the reference HTML board.
+6. Begin managing work directly from the repository.
+
+No server, database, or cloud service is required.
+
+---
+
+# Project Documents
+
+| Document    | Purpose                               |
+| ----------- | ------------------------------------- |
+| `README.md` | Project overview and usage            |
+| `SPEC.md`   | Formal WorkSpec specification         |
+| `SKILL.md`  | AI agent operating instructions       |
+| `PROMPT.md` | Reference implementation requirements |
+
+---
+
+# Contributing
+
+When contributing to a WorkSpec repository:
+
+* Keep changes focused.
+* Preserve work item IDs.
+* Avoid unnecessary formatting changes.
+* Follow the WorkSpec specification.
+* Preserve compatibility with existing repositories whenever possible.
+
+---
+
+# License
+
+WorkSpec itself is a specification.
+
+Projects implementing the specification may choose their own software license unless otherwise stated.
+
+---
+
 # WorkSpec Board — Reference Implementation
 
 A zero-backend, file-based visual editor and navigator for `.workspec/`
