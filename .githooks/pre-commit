@@ -1,0 +1,21 @@
+#!/bin/sh
+# Validate the staged .workspec tree before every commit.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# The staged files (not the working tree) are exported to a temporary
+# directory and checked with the board's own loader, so a duplicate ID, a
+# file whose name does not match its id, or a broken ID block registry never
+# leaves this machine. Exit non-zero aborts the commit.
+set -e
+
+ROOT=$(git rev-parse --show-toplevel)
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+# Nothing staged under .workspec: nothing to check.
+if [ -z "$(git diff --cached --name-only -- .workspec)" ]; then
+  exit 0
+fi
+
+git ls-files -z --cached -- .workspec | git checkout-index -z --stdin --prefix="$TMP/"
+node "$ROOT/tools/validate-workspec.js" "$TMP/.workspec"
