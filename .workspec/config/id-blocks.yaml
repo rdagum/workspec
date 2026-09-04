@@ -1,0 +1,6 @@
+# Claimed ID blocks (SPEC.md §18.1). One line per working copy; commit this file.
+# Block N covers TYPE-N001 … TYPE-(N+1)000 for every type when block_size is 1000.
+# Never edit or reuse a block that has been claimed by someone else.
+blocks:
+  - { block: 1, owner: rdagum, label: windows-pc, claimed: 2026-09-04 }
+  - { block: 2, owner: rdagum, label: macbook, claimed: 2026-09-04 }

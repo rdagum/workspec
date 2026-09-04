@@ -279,6 +279,25 @@ Example:
 STORY-000124.md
 ```
 
+If `board.yaml` sets `id_allocation.strategy: block` (SPEC.md 18.1), step 2 is constrained:
+
+* Find your block: `id_block` in `.workspec/config/user.local.yaml`, or the entry in `.workspec/config/id-blocks.yaml` whose owner is you.
+* Generate the ID inside that block only: the lowest unused number between `block × block_size + 1` and `(block + 1) × block_size` for the item's type.
+* Never allocate outside your block. If the block is exhausted, claim the lowest free block in the registry, commit the registry, and say so.
+* If no block is configured, stop and ask. Do not fall back to a sequential ID; that is exactly the collision the scheme prevents.
+* When the repository ships `tools/validate-workspec.js`, run it before committing.
+
+---
+
+# Renumbering After a Collision
+
+IDs are immutable. The single exception is a duplicate ID created by two working copies before the repository adopted ID blocks, or by a misconfigured client.
+
+* Renumber only the side that has not reached the main branch. IDs on `main` never change; the branch adapts.
+* Take the new ID from your own block.
+* Use the repository's tool (`node tools/renumber.js OLD-ID NEW-ID`, with `--body` to rewrite Markdown mentions) rather than editing by hand, so the file name, the `id:` line and every reference in `parent`, `depends_on`, `blocks` and `related` change together.
+* Commit the renumber on its own.
+
 ---
 
 # Error Handling
@@ -313,8 +332,8 @@ When uncertain, ask instead of guessing.
 
 Do not:
 
-* renumber work items
-* rename IDs
+* renumber work items or rename IDs (the only exception is "Renumbering After a Collision", on the unmerged side)
+* generate an ID outside your block when the repository allocates in blocks
 * rewrite unrelated files
 * modify unrelated work items
 * remove unknown metadata

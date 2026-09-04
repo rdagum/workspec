@@ -423,3 +423,44 @@ describe('yaml: patchScalarLine', () => {
     assert.equal(parseYaml(frontMatter).status, 'Review');
   });
 });
+
+describe('yaml: flow mappings', () => {
+  it('reads an inline mapping into an ordered object', () => {
+    assert.deepEqual(parseYaml('a: { block: 1, owner: rdagum, label: windows-pc }'), {
+      a: { block: 1, owner: 'rdagum', label: 'windows-pc' },
+    });
+  });
+
+  it('reads a sequence of inline mappings, as used by the ID block registry', () => {
+    const text = 'blocks:\n  - { block: 1, owner: rdagum, label: windows-pc }\n  - { block: 2, owner: rdagum, label: macbook, claimed: 2026-09-04 }\n';
+    assert.deepEqual(parseYaml(text), {
+      blocks: [
+        { block: 1, owner: 'rdagum', label: 'windows-pc' },
+        { block: 2, owner: 'rdagum', label: 'macbook', claimed: '2026-09-04' },
+      ],
+    });
+  });
+
+  it('parses the values inside like any other scalar', () => {
+    assert.deepEqual(parseYaml('a: { n: 42, s: "x, y", q: \'it\'\'s\', t: true, z: ~, d: 1.0 }'), {
+      a: { n: 42, s: 'x, y', q: "it's", t: true, z: null, d: '1.0' },
+    });
+  });
+
+  it('reads {} as an empty mapping and writes it back the same way', () => {
+    assert.deepEqual(parseYaml('a: {}\nb:\n  - {}'), { a: {}, b: [{}] });
+    assert.equal(stringifyYaml({ a: {}, b: [{}] }), 'a: {}\nb:\n  - {}');
+    assertStable({ a: {}, b: [{}] });
+  });
+
+  it('keeps braces that are not a mapping as a literal string', () => {
+    assert.deepEqual(parseYaml('a: {not a mapping}'), { a: '{not a mapping}' });
+    assert.deepEqual(parseYaml('a: "{ quoted: text }"'), { a: '{ quoted: text }' });
+  });
+
+  it('serializes a flow mapping as a block mapping (like flow sequences)', () => {
+    const obj = parseYaml('blocks:\n  - { block: 1, owner: rdagum }');
+    assert.equal(stringifyYaml(obj), 'blocks:\n  - block: 1\n    owner: rdagum');
+    assertStable(obj);
+  });
+});

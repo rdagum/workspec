@@ -13,6 +13,7 @@
 
 const { buildColumns, distinctValues, sortItems } = WS;
 const { serializeItem, changeStatus, validateItem } = WS;
+const { knownIds, lowestFreeBlock, appendBlockEntry, setLocalKeys, REGISTRY_PATH, LOCAL_PATH } = WS;
 
 const emptyFilters = () => ({ text: '', type: '', status: '', assignee: '', label: '' });
 
@@ -188,8 +189,42 @@ class Store {
     };
     validateItem(record, this.model.workflow);
     this.model.items.set(path, record);
+    if (meta.id && !this.model.itemsById.has(meta.id)) this.model.itemsById.set(meta.id, record);
     this.set({ selectedPath: path, dirty: false, message: `Created ${meta.id}` });
     return record;
+  }
+
+  /**
+   * Claim the lowest free ID block for this working copy (SPEC.md §18.1):
+   * append it to the committed registry and point the git-ignored local
+   * config at it. Returns the new registry entry; the caller reminds the user
+   * to commit the registry so no other clone can take the same block.
+   */
+  async claimIdBlock({ owner, label }) {
+    const model = this.model;
+    const fs = this.state.fs;
+    const block = lowestFreeBlock(model.idBlocks, knownIds(model), model.idAllocation.blockSize);
+    // Same date source as createItem's `created`, so the claim-date check in
+    // validateRepository compares like with like (STORY-000005 moves both to local time).
+    const entry = { block, owner, label, claimed: new Date().toISOString().slice(0, 10) };
+
+    const registry = (await fs.exists(REGISTRY_PATH)) ? await fs.readFile(REGISTRY_PATH) : '';
+    await fs.writeFile(REGISTRY_PATH, appendBlockEntry(registry, entry));
+
+    const patch = {};
+    if (!model.local.handle) patch.handle = owner;
+    patch.id_block = block;
+    const local = (await fs.exists(LOCAL_PATH)) ? await fs.readFile(LOCAL_PATH) : '';
+    await fs.writeFile(LOCAL_PATH, setLocalKeys(local, patch));
+
+    model.idBlocks.push(entry);
+    model.local = { ...model.local, ...patch };
+    // The clone now has a registered block, so those load-time notices are stale.
+    model.loadErrors = model.loadErrors.filter(
+      (e) => e.code !== 'unregistered-local-block' && e.code !== 'invalid-local-block'
+    );
+    this.emit();
+    return entry;
   }
 
   /** Delete an item's file from disk and drop it from the model. */
@@ -197,6 +232,8 @@ class Store {
     const record = this.model.items.get(path);
     await this.state.fs.deleteFile(path);
     this.model.items.delete(path);
+    const id = record && record.meta && record.meta.id;
+    if (id && this.model.itemsById.get(id) === record) this.model.itemsById.delete(id);
     const label = (record && record.meta && record.meta.id) || path.split('/').pop();
     const patch = { message: `Deleted ${label}` };
     if (this.state.selectedPath === path) patch.selectedPath = null; // close editor

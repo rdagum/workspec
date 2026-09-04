@@ -287,6 +287,7 @@ Optional:
 ```text
 users.yaml
 templates.yaml
+id-blocks.yaml   (see 18.1)
 ```
 
 Unknown configuration files MUST be preserved.
@@ -528,7 +529,13 @@ email:
 theme:
 
 default_assignee:
+
+handle:
+
+id_block:
 ```
+
+`handle` and `id_block` belong to the ID allocation extension (18.1). Because this file is per working copy, it is the natural home for anything that must differ between two clones of the same repository.
 
 ---
 
@@ -593,6 +600,59 @@ agent:
 ```
 
 Implementations MUST preserve unknown namespaces.
+
+---
+
+## 18.1 ID Allocation Blocks (WS-1.1 extension)
+
+**Status:** optional extension introduced by WorkSpec 1.1. An implementation that ignores it remains 1.0-compliant. A repository that does not declare `id_allocation` behaves exactly as in 1.0.
+
+### Problem
+
+"Next available ID" is computed from the files in one working copy. Two clones that each create an item before synchronising mint the same ID; the merge then either conflicts on the file or, when resolved by taking one side, silently drops an item. The unit that collides is the working copy, not the person: one engineer with two machines collides with themselves.
+
+### Configuration
+
+`board.yaml`:
+
+```yaml
+id_allocation:
+  strategy: block        # sequential (default) | block
+  block_size: 1000       # optional; default 1000
+```
+
+Registry of claimed blocks, `.workspec/config/id-blocks.yaml`, committed to Git:
+
+```yaml
+blocks:
+  - { block: 1, owner: rdagum, label: windows-pc, claimed: 2026-09-04 }
+  - { block: 2, owner: rdagum, label: macbook, claimed: 2026-09-04 }
+  - { block: 3, owner: claude, label: ci-agent }
+```
+
+Per working copy, `.workspec/config/user.local.yaml` (Git-ignored, 14):
+
+```yaml
+handle: rdagum
+id_block: 2
+```
+
+### Rules
+
+* Block *N* covers the numbers *N × block_size + 1* through *(N + 1) × block_size*, for every type. Block 0 is the legacy sequential range; it MUST NOT be claimed and existing items never move.
+* Under `strategy: block`, an implementation MUST allocate a new ID only inside the block named by `id_block`, choosing the lowest unused number in it. It MUST refuse to allocate when no block is configured or the block is not in the registry, and MUST NOT allocate outside the block when the block is exhausted; a new block is claimed instead.
+* Block numbers in the registry MUST be unique. `owner` is required. `label` names the working copy. `claimed` (YYYY-MM-DD) is optional and lets a validator recognise items that occupied the range before the claim.
+* Claiming a block means appending the lowest block number that is neither registered nor populated by existing items, then committing the registry. Two clones that claim concurrently produce a Git conflict on the registry rather than a silent double claim.
+* Under `strategy: sequential`, the default, allocation is unchanged from 1.0.
+* ID format, uniqueness and immutability (7.2) are unchanged. IDs are no longer globally consecutive, so order by `created`, not by ID.
+
+### Validation
+
+An implementation SHOULD report, when loading a repository: two files declaring the same ID; a filename that does not equal the ID (an error, not a warning); duplicate block numbers in the registry; a local `id_block` that the registry does not contain; and an item inside a claimed block whose `created` date precedes the block's `claimed` date.
+
+### Repair
+
+A duplicate ID that reaches a merge is repaired by renumbering the item on the side that has not reached the main branch; IDs already on the main branch remain immutable. Renumbering renames the file, rewrites `id:` and every reference in `parent`, `depends_on`, `blocks` and `related`, and is committed on its own.
 
 ---
 

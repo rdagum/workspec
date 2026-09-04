@@ -1,2 +1,4 @@
 # Fixtures are byte-exact test inputs: never convert line endings or strip the BOM.
 test/fixtures/** -text
+# Git hooks are shell scripts: keep LF so they run on macOS and Linux.
+.githooks/* text eol=lf

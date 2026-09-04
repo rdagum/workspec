@@ -1,0 +1,23 @@
+# Validate the .workspec backlog on every push and pull request.
+#
+# For pull_request events GitHub checks out the *merge* commit of the branch
+# into its base, so two branches that each created the same ID fail here even
+# though each is valid on its own (docs/REVIEW-2026-09.md §3, layer 2).
+name: Validate WorkSpec
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: node --test
+      - name: Validate .workspec (duplicate IDs, file names, ID block registry)
+        run: node tools/validate-workspec.js .workspec

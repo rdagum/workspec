@@ -48,6 +48,7 @@ WorkSpec is built around a few simple principles:
 │   ├── board.yaml
 │   ├── workflow.yaml
 │   ├── users.yaml
+│   ├── id-blocks.yaml
 │   └── user.local.yaml
 │
 ├── items/
@@ -300,8 +301,9 @@ That's it — there is nothing to install or serve.
 ## Running the tests
 
 The pure modules (`utils/yaml.js`, `utils/ids.js`, `core/parser.js`,
-`core/model.js`) are covered by Node's built-in test runner. There is nothing
-to install: a stock Node LTS (22 or newer) is the only requirement.
+`core/allocation.js`, `core/model.js`, `state/store.js`) and the command-line
+tools are covered by Node's built-in test runner. There is nothing to install:
+a stock Node LTS (22 or newer) is the only requirement.
 
 ```
 node --test                      # discovers test/*.test.js
@@ -331,11 +333,102 @@ defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
   (pending edits are also flushed automatically when you switch items or close).
   Only the single file is written; field order and unknown fields are preserved.
 - **Create** — make a new item from a template in `templates/`; the next
-  zero-padded `TYPE-000000` id is generated automatically.
+  zero-padded `TYPE-000000` id is generated automatically, from this clone's
+  own ID block when the repository allocates in blocks (see below).
 - **Search & filter** — by id/title text, and by type, status, assignee, label.
 - **Context** — read-only viewer for `context/*.md`.
-- **Validation** — required fields, ID format and status-vs-workflow are checked;
-  bad files surface errors but never stop the rest of the board from loading.
+- **Validation** — required fields, ID format, filename-equals-ID, duplicate
+  IDs across files and status-vs-workflow are checked; bad files surface
+  errors but never stop the rest of the board from loading.
+
+## Avoiding ID collisions between working copies
+
+The next ID is `max + 1` over the files in *your* checkout, so two clones that
+each create an item before syncing mint the same ID: `STORY-000014` twice, an
+add/add conflict on merge, or a silently dropped item when the conflict is
+resolved by taking one side. One engineer with a PC and a Mac collides with
+themselves, so the unit that matters is the working copy. The fix is
+per-clone allocator blocks, backed by validation and a mechanical repair
+(design: `docs/REVIEW-2026-09.md` §3; spec: `SPEC.md` §18.1).
+
+**1. Prevention: one block per working copy.** Turn it on in `board.yaml`:
+
+```yaml
+id_allocation:
+  strategy: block      # sequential (default) | block
+  block_size: 1000
+```
+
+Every clone that creates items owns a block: block N is
+`TYPE-N001 … TYPE-(N+1)000` for every type, and block 0 is where the items
+you already have stay, so adoption needs no renumbering. Claimed blocks live
+in the committed registry `config/id-blocks.yaml`, one line per clone; your
+own block number lives in the git-ignored `config/user.local.yaml`:
+
+```yaml
+# config/id-blocks.yaml (committed)
+blocks:
+  - { block: 1, owner: rdagum, label: windows-pc, claimed: 2026-09-04 }
+  - { block: 2, owner: rdagum, label: macbook, claimed: 2026-09-04 }
+
+# config/user.local.yaml (git-ignored, one per clone)
+handle: rdagum
+id_block: 2
+```
+
+The **New work item** dialog refuses to generate an ID until this clone has a
+registered block and offers **Claim a block** inline: it appends the lowest
+free block to the registry, writes `id_block` to your local config and reminds
+you to commit the registry (that commit is what makes the claim visible to
+every other clone). The ID preview shows the block owner and label next to
+the ID, e.g. `STORY-002007  block 2 · rdagum / macbook`. A person with two
+machines has two clones and two blocks; an AI agent is just another allocator.
+
+**2. Detection: the same checks in the app, in a hook and in CI.** Loading a
+repository reports duplicate IDs across files, a filename that does not match
+its `id:`, duplicate block numbers in the registry, a local `id_block` the
+registry does not know, and an item that sits in a claimed block but was
+created before the claim. `tools/validate-workspec.js` runs exactly the same
+checks from Node with zero dependencies, prints one line per problem and
+exits non-zero on errors (2 when the repository cannot be loaded):
+
+```
+node tools/validate-workspec.js               # nearest .workspec at or above the cwd
+node tools/validate-workspec.js path/to/repo  # or an explicit repo / .workspec dir
+node tools/validate-workspec.js --strict      # warnings fail too
+```
+
+As a pre-commit hook, checking the *staged* files (`.githooks/pre-commit`;
+enable once per clone):
+
+```
+git config core.hooksPath .githooks
+```
+
+In CI, on the pull-request *merge result*, so that two branches which are each
+valid on their own still fail when they collide with each other:
+`.github/workflows/validate-workspec.yml` runs the unit tests and the
+validator on `push` and `pull_request`. GitHub checks out the merge commit for
+`pull_request` events; on a host that checks out the branch head instead, run
+`git merge-tree --write-tree origin/main HEAD` and validate that tree.
+
+**3. Repair: a mechanical renumber.** A collision from before adoption, or
+from a misconfigured client, is fixed with one command that renames the file,
+patches its `id:` line and rewrites every `parent`, `depends_on`, `blocks` and
+`related` reference in the other items (whole-word Markdown mentions too with
+`--body`):
+
+```
+node tools/renumber.js STORY-000014 STORY-002001 --dry-run   # show the plan
+node tools/renumber.js STORY-000014 STORY-002001 --body      # do it
+```
+
+Policy: **renumber only the side that has not reached `main`**. IDs on `main`
+are immutable; the branch adapts. This is the one sanctioned exception to
+"never renumber" in `SKILL.md`.
+
+Repositories that do not set `id_allocation` keep the sequential behaviour and
+only gain the duplicate-ID and filename checks.
 
 ## Project layout
 
@@ -350,6 +443,7 @@ app.js            wiring: load, create, context, keyboard, toasts
 core/
   filesystem.js   File System Access API abstraction (all I/O goes through here)
   parser.js       work-item parse / validate / serialize / surgical status patch
+  allocation.js   per-clone ID blocks, registry, cross-file validation, renumber plans
   model.js        repository loader + board model
 
 state/
@@ -368,8 +462,17 @@ utils/
 test/             node --test suite (not loaded by the browser)
   load.js         evaluates the scripts above in Node against a stub window
   helpers.js      fixture discovery + the "content-equal" comparison
-  *.test.js       yaml, ids, parser unit tests; roundtrip runs the fixture corpus
+  *.test.js       yaml, ids, parser, allocation, model, store and tools tests;
+                  roundtrip runs the fixture corpus
   fixtures/items/ complete work-item files that must round-trip unchanged
+
+tools/            node CLIs (zero dependencies; reuse test/load.js)
+  lib.js          Node filesystem adapter + repository loader for the tools
+  validate-workspec.js   the board's checks from the command line; non-zero exit on errors
+  renumber.js     move one item to a new ID and rewrite every reference
+
+.githooks/        pre-commit: validate the staged .workspec (git config core.hooksPath .githooks)
+.github/workflows/validate-workspec.yml   tests + validator on push and PR merge result
 
 .workspec/        this project's backlog (config, templates, context, items)
 .workspec-demo/   sample repository for manual testing
@@ -381,6 +484,8 @@ test/             node --test suite (not loaded by the browser)
 - Only the file you edited is rewritten — no batch normalization.
 - Drag/drop performs a surgical single-line edit of `status:`.
 - IDs are immutable, zero-padded to six digits, formatted `TYPE-000123`.
+- A new ID is never one that another working copy could also generate when
+  `id_allocation.strategy: block` is on; the app refuses rather than guesses.
 - Status always matches a configured workflow column.
 
 ## Notes & limits

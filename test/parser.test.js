@@ -99,11 +99,11 @@ describe('parser: parseItem', () => {
     assert.ok(rec.errors.some((e) => /Invalid ID format/.test(e)));
   });
 
-  it('warns, but does not error, when the filename does not match the id', () => {
+  it('errors when the filename does not match the id (SPEC.md §7.2)', () => {
     const rec = parseItem('items/wrong-name.md', GOOD);
-    assert.deepEqual(rec.errors, []);
-    assert.equal(rec.warnings.length, 1);
-    assert.match(rec.warnings[0], /wrong-name\.md.*STORY-000042/);
+    assert.deepEqual(rec.warnings, []);
+    assert.equal(rec.errors.length, 1);
+    assert.match(rec.errors[0], /wrong-name\.md.*STORY-000042.*expected STORY-000042\.md/);
   });
 
   it('never throws on garbage input', () => {
@@ -246,5 +246,40 @@ describe('parser: changeStatus', () => {
     changeStatus(rec, 'Done');
     assert.equal(rec.meta.status, 'Ready');
     assert.equal(rec.raw, GOOD);
+  });
+});
+
+describe('parser: unresolved Git conflict markers', () => {
+  const { hasConflictMarkers } = WS;
+  const conflicted = [
+    '---', 'id: STORY-000014', 'type: STORY', 'title: x', 'status: Ready',
+    '<<<<<<< HEAD', 'priority: high', '=======', 'priority: low', '>>>>>>> origin/feat-c',
+    'created: 2026-09-04', 'updated: 2026-09-04', 'spec_version: 1.0', '---', '', '# Summary', '',
+  ].join('\n');
+
+  it('detects the markers Git writes, in LF and CRLF files', () => {
+    assert.equal(hasConflictMarkers(conflicted), true);
+    assert.equal(hasConflictMarkers(conflicted.replace(/\n/g, '\r\n')), true);
+    assert.equal(hasConflictMarkers('a\n||||||| base\nb\n'), true);
+    assert.equal(hasConflictMarkers(GOOD), false);
+  });
+
+  it('does not mistake a setext heading underline or ASCII art for a conflict', () => {
+    assert.equal(hasConflictMarkers('Title\n=======\n\ntext\n'), false);
+    assert.equal(hasConflictMarkers('<<<<<<<\n>>>>>>>\n'), false);
+    assert.equal(hasConflictMarkers('see <<<<<<< HEAD inline\n'), false);
+  });
+
+  it('marks a half-merged item as an error even though it still parses', () => {
+    const rec = parseItem('items/STORY-000014.md', conflicted);
+    assert.ok(rec.errors.some((e) => /Unresolved Git conflict markers/.test(e)), rec.errors.join('; '));
+    assert.equal(rec.meta.id, 'STORY-000014', 'the rest of the file is still read');
+  });
+
+  it('reports a half-merged config file as an error instead of parsing it quietly', () => {
+    const { data, error } = parseConfig('blocks:\n<<<<<<< HEAD\n  - { block: 3, owner: a }\n=======\n  - { block: 3, owner: b }\n>>>>>>> feat\n');
+    assert.match(error, /Unresolved Git conflict markers/);
+    assert.equal(typeof data, 'object');
+    assert.equal(parseConfig('columns:\n  - Backlog\n').error, null);
   });
 });

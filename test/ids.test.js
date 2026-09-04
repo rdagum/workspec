@@ -156,3 +156,90 @@ describe('ids: nextId', () => {
     assert.equal(isValidId(next), true);
   });
 });
+
+describe('ids: blocks', () => {
+  const { DEFAULT_BLOCK_SIZE, MAX_NUMBER, blockRange, blockOf, maxBlock } = loadWS(['utils/ids.js']);
+
+  it('defaults to blocks of 1000 inside the six-digit range', () => {
+    assert.equal(DEFAULT_BLOCK_SIZE, 1000);
+    assert.equal(MAX_NUMBER, 999999);
+    assert.equal(maxBlock(), 999);
+    assert.equal(maxBlock(500), 1999);
+  });
+
+  it('block N covers N*size+1 … (N+1)*size, so block 0 is the legacy range', () => {
+    assert.deepEqual(blockRange(0), { lo: 1, hi: 1000 });
+    assert.deepEqual(blockRange(1), { lo: 1001, hi: 2000 });
+    assert.deepEqual(blockRange(2, 500), { lo: 1001, hi: 1500 });
+  });
+
+  it('clips the last block to 999999', () => {
+    assert.deepEqual(blockRange(999), { lo: 999001, hi: 999999 });
+  });
+
+  it('rejects blocks and sizes outside the range', () => {
+    assert.throws(() => blockRange(-1), RangeError);
+    assert.throws(() => blockRange(1000), RangeError);
+    assert.throws(() => blockRange(1.5), RangeError);
+    assert.throws(() => blockRange('1'), RangeError);
+    assert.throws(() => blockRange(1, 0), RangeError);
+    assert.throws(() => blockRange(1, 1000000), RangeError);
+  });
+
+  it('maps a sequence number to its block (0 counts as block 0)', () => {
+    assert.equal(blockOf(0), 0);
+    assert.equal(blockOf(1), 0);
+    assert.equal(blockOf(1000), 0);
+    assert.equal(blockOf(1001), 1);
+    assert.equal(blockOf(2000), 1);
+    assert.equal(blockOf(2001), 2);
+    assert.equal(blockOf(999999), 999);
+    assert.equal(blockOf(750, 500), 1);
+  });
+});
+
+describe('ids: nextId with a block', () => {
+  it('starts at the first number of an empty block', () => {
+    assert.equal(nextId('STORY', [], { block: 2 }), 'STORY-002001');
+    assert.equal(nextId('STORY', ['STORY-000001', 'STORY-000999'], { block: 2 }), 'STORY-002001');
+  });
+
+  it('continues after the highest ID inside the block only', () => {
+    const ids = ['STORY-000010', 'STORY-002003', 'STORY-002001', 'STORY-003500', 'BUG-002007'];
+    assert.equal(nextId('STORY', ids, { block: 2 }), 'STORY-002004');
+    assert.equal(nextId('BUG', ids, { block: 2 }), 'BUG-002008');
+    assert.equal(nextId('STORY', ids, { block: 3 }), 'STORY-003501');
+  });
+
+  it('ignores IDs from other blocks even when they are higher', () => {
+    assert.equal(nextId('TASK', ['TASK-005000'], { block: 1 }), 'TASK-001001');
+  });
+
+  it('honours a custom block size', () => {
+    assert.equal(nextId('TASK', ['TASK-000120'], { block: 1, blockSize: 100 }), 'TASK-000121');
+    assert.equal(nextId('TASK', [], { block: 3, blockSize: 100 }), 'TASK-000301');
+  });
+
+  it('throws when the block is exhausted instead of spilling into the next one', () => {
+    assert.throws(() => nextId('STORY', ['STORY-002000'], { block: 1 }), /block 1 is exhausted for STORY/);
+    assert.throws(() => nextId('STORY', ['STORY-000200'], { block: 1, blockSize: 100 }), /exhausted/);
+    assert.throws(() => nextId('STORY', ['STORY-999999'], { block: 999 }), /exhausted/);
+  });
+
+  it('throws when the whole six-digit range is used up', () => {
+    assert.throws(() => nextId('STORY', ['STORY-999999']), /six-digit ID range is exhausted/);
+  });
+
+  it('behaves exactly like the sequential form when block is null or undefined', () => {
+    const ids = ['STORY-000001', 'STORY-000007', 'STORY-002003'];
+    assert.equal(nextId('STORY', ids, {}), nextId('STORY', ids));
+    assert.equal(nextId('STORY', ids, { block: null }), 'STORY-002004');
+    assert.equal(nextId('STORY', ids, { block: undefined }), 'STORY-002004');
+  });
+
+  it('rejects a malformed block option', () => {
+    assert.throws(() => nextId('STORY', [], { block: -1 }), RangeError);
+    assert.throws(() => nextId('STORY', [], { block: '2' }), RangeError);
+    assert.throws(() => nextId('STORY', [], { block: 1, blockSize: 0 }), RangeError);
+  });
+});

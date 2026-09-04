@@ -35,12 +35,23 @@ const REQUIRED_FIXTURES = [
   'bom.md',
 ];
 
+/**
+ * Fixtures are named after what they cover, not after their ID, while the
+ * parser (SPEC.md §7.2) requires the file name to equal the ID. Parse each one
+ * under the path the board would find it at.
+ */
+function fixturePath(raw) {
+  const m = String(raw).match(/^id:[ \t]*(\S+)[ \t]*\r?$/m);
+  return `items/${m ? m[1] : 'unknown'}.md`;
+}
+
 function roundTrip(name, raw) {
-  const rec = parseItem(`items/${name}`, raw);
+  const path = fixturePath(raw);
+  const rec = parseItem(path, raw);
   assert.deepEqual(rec.errors, [], `${name} should parse without errors`);
   const once = serializeItem(rec.meta, rec.body);
   assert.equal(normalizeDocument(once), normalizeDocument(raw), `${name} is not content-equal after a round trip`);
-  const again = parseItem(`items/${name}`, once);
+  const again = parseItem(path, once);
   assert.deepEqual(again.errors, []);
   assert.deepEqual(again.meta, rec.meta, `${name} meta changed on the second parse`);
   assert.equal(serializeItem(again.meta, again.body), once, `${name} is not stable after the first write`);

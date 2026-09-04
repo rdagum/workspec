@@ -30,7 +30,7 @@ const ROOT = path.resolve(__dirname, '..');
  * Modules that have no DOM or File System Access API dependency, in the same
  * dependency order index.html uses. Anything that touches `document` stays out.
  */
-const PURE_MODULES = ['utils/yaml.js', 'utils/ids.js', 'core/parser.js', 'core/model.js'];
+const PURE_MODULES = ['utils/yaml.js', 'utils/ids.js', 'core/parser.js', 'core/allocation.js', 'core/model.js'];
 
 /**
  * Evaluate the given modules (paths relative to the repository root, in

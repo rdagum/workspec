@@ -371,6 +371,19 @@ body[data-detail-display="floating"] .meta-form .field:has(textarea) { grid-colu
   display: inline-block; background: var(--bg); padding: 6px 10px; border-radius: 6px;
   border: 1px solid var(--border-2); font-family: ui-monospace, monospace; color: var(--accent);
 }
+.create-id-preview.unavailable { color: var(--text-faint); border-style: dashed; }
+.create-id-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.create-id-block { font-size: 12px; color: var(--text-dim); }
+.create-id-note { color: var(--warn); }
+/* Inline "claim a block" panel shown when this clone has no ID block yet. */
+.claim-block {
+  margin: 4px 0 6px; padding: 12px 14px; border: 1px dashed var(--warn); border-radius: 8px;
+  background: var(--bg);
+}
+.claim-text { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: var(--text-dim); }
+.claim-block .field-row { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; }
+.claim-block .field { margin-bottom: 8px; }
+.claim-actions { display: flex; justify-content: flex-end; }
 .modal-context { width: 760px; max-width: 100%; max-height: 85vh; display: flex; flex-direction: column; }
 .context-header { display: flex; align-items: center; gap: 12px; }
 .context-header h2 { flex: 1 1 auto; margin: 0; font-size: 16px; }

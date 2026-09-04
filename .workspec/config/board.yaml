@@ -1,6 +1,11 @@
 name: WorkSpec Board Backlog
 description: Work items for the WorkSpec reference implementation itself (see docs/REVIEW-2026-09.md)
 spec_version: 1.0
+# ID allocation (SPEC.md §18.1): every working copy allocates inside its own
+# block from config/id-blocks.yaml; block 0 holds the items created before.
+id_allocation:
+  strategy: block
+  block_size: 1000
 settings:
   card_fields:
     - id

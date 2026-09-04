@@ -9,6 +9,7 @@
 'use strict';
 
 const { parseItem, parseConfig, validateItem } = WS;
+const { parseIdAllocation, parseIdBlocks, validateRepository, REGISTRY_PATH } = WS;
 
 const SUPPORTED_MAJOR = 1;
 
@@ -31,7 +32,8 @@ function coerceColumns(raw) {
 
 /**
  * Read the whole repository. Returns a model object:
- *   { fs, board, workflow, items: Map, templates: [], context: [], loadErrors: [] }
+ *   { fs, board, workflow, items: Map, itemsById: Map, idAllocation, idBlocks,
+ *     templates: [], context: [], loadErrors: [] }
  */
 async function loadRepository(fs) {
   const model = {
@@ -41,6 +43,11 @@ async function loadRepository(fs) {
     workflow: [...DEFAULT_WORKFLOW],
     specVersion: null,
     items: new Map(),
+    itemsById: new Map(),
+    // ID allocation (SPEC.md §18.1): strategy + block size from board.yaml and
+    // the committed registry of claimed blocks. Defaults reproduce 1.0 behaviour.
+    idAllocation: parseIdAllocation(null),
+    idBlocks: [],
     templates: [],
     context: [],
     users: [],
@@ -77,11 +84,30 @@ async function loadRepository(fs) {
       if (inlineCols && inlineCols.length && model.workflow === DEFAULT_WORKFLOW) {
         model.workflow = inlineCols;
       }
+      const alloc = parseIdAllocation(data.id_allocation);
+      for (const message of alloc.errors) model.loadErrors.push({ file: 'config/board.yaml', message });
+      model.idAllocation = { strategy: alloc.strategy, blockSize: alloc.blockSize };
     } else {
       model.warnings.push('config/board.yaml not found.');
     }
   } catch (err) {
     model.loadErrors.push({ file: 'config/board.yaml', message: err.message });
+  }
+
+  // Registry of claimed ID blocks (optional, committed). Read whenever present
+  // so a broken registry is reported even before the strategy is switched on.
+  try {
+    if (await fs.exists(REGISTRY_PATH)) {
+      const { data, error } = parseConfig(await fs.readFile(REGISTRY_PATH));
+      if (error) model.loadErrors.push({ file: REGISTRY_PATH, message: error });
+      const reg = parseIdBlocks(data, model.idAllocation.blockSize);
+      for (const message of reg.errors) model.loadErrors.push({ file: REGISTRY_PATH, message });
+      model.idBlocks = reg.blocks;
+    } else if (model.idAllocation.strategy === 'block') {
+      model.warnings.push(`${REGISTRY_PATH} not found — no ID blocks are claimed yet.`);
+    }
+  } catch (err) {
+    model.loadErrors.push({ file: REGISTRY_PATH, message: err.message });
   }
 
   // Users roster (optional) — powers the assignee dropdown.
@@ -133,6 +159,8 @@ async function loadRepository(fs) {
       model.loadErrors.push({ file: f.path, message: err.message });
     }
   }
+  // Cross-file checks: duplicate IDs, block ownership, local block vs registry.
+  validateRepository(model);
 
   // --- Templates -----------------------------------------------------------
   const templateFiles = await fs.listFiles('templates', { ext: '.md' });

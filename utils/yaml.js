@@ -8,6 +8,7 @@
 //   - quoted scalars (single/double)
 //   - block sequences ("- item")
 //   - inline flow sequences ("[a, b, c]" and "[]")
+//   - inline flow mappings ("{ block: 1, owner: rdagum }" and "{}")
 //   - nested mappings (for reserved namespaces: extensions / custom / agent)
 //   - block scalars ("|" and ">")
 //
@@ -48,6 +49,21 @@ function parseScalar(raw) {
     const inner = s.slice(1, -1).trim();
     if (inner === '') return [];
     return splitFlow(inner).map((part) => parseScalar(part));
+  }
+
+  // Inline flow mapping: {}, { block: 1, owner: rdagum }. The ID block registry
+  // uses this form so one clone is one line. Anything that does not split
+  // cleanly into "key: value" pairs is kept as the literal string it was.
+  if (s[0] === '{' && s[s.length - 1] === '}') {
+    const inner = s.slice(1, -1).trim();
+    if (inner === '') return {};
+    const obj = {};
+    for (const part of splitFlow(inner)) {
+      const kv = splitKeyValue(part);
+      if (!kv || kv.key === '') return s;
+      obj[kv.key] = parseScalar(kv.rest);
+    }
+    return obj;
   }
 
   // Integers become numbers; decimals stay strings so values like "1.0"
@@ -173,8 +189,9 @@ function parseYaml(text) {
         } else {
           arr.push(null);
         }
-      } else if (splitKeyValue(itemBody)) {
+      } else if (!/^[[{]/.test(itemBody) && splitKeyValue(itemBody)) {
         // Inline "- key: value" starts a mapping at the dash's content column.
+        // A flow collection ("- { a: 1 }", "- [a, b]") is a scalar to parseScalar.
         idx--; // re-read this line as a mapping, treating the dash area as indent
         const mapIndent = ci + 2;
         // Rewrite current line so the mapping parser sees plain indentation.
@@ -302,7 +319,8 @@ function appendKey(prefix, key, value, childIndent, lines) {
     return;
   }
   if (value !== null && typeof value === 'object') {
-    lines.push(`${prefix}${key}:`);
+    // An empty mapping must stay a mapping; a bare `key:` would read back as null.
+    lines.push(Object.keys(value).length === 0 ? `${prefix}${key}: {}` : `${prefix}${key}:`);
     serializeNode(value, childIndent + 1, lines);
     return;
   }

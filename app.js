@@ -13,7 +13,7 @@ const { BoardView } = WS;
 const { EditorView } = WS;
 const { SidebarView } = WS;
 const { el, clear, renderMarkdown } = WS;
-const { nextId } = WS;
+const { allocateId, allocationState, allocationProblemMessage, describeBlock, REGISTRY_PATH, LOCAL_PATH } = WS;
 const { CANONICAL_ORDER } = WS;
 
 const store = new Store();
@@ -160,31 +160,109 @@ function openCreateDialog() {
     typeSelect.append(el('option', { value: t.name }, `${t.type}${t.name !== t.type ? ` (${t.name})` : ''}`));
   }
   const titleInput = el('input', { class: 'field-input', type: 'text', placeholder: 'Title…' });
+  const currentTemplate = () => typeOptions.find((t) => t.name === typeSelect.value) || typeOptions[0];
 
+  // Generated-ID preview. Under `id_allocation.strategy: block` the ID comes
+  // from this clone's block and the owner/label are shown next to it, so the
+  // scheme is visible rather than magical (SPEC.md §18.1).
   const previewId = el('code', { class: 'create-id-preview' });
-  const updatePreview = () => {
-    const sel = typeOptions.find((t) => t.name === typeSelect.value) || typeOptions[0];
-    const ids = [...model.items.keys()].map((p) => p.split('/').pop().replace(/\.md$/i, ''));
-    previewId.textContent = nextId(sel.type, ids);
+  const previewBlock = el('span', { class: 'create-id-block' });
+  const previewNote = el('div', { class: 'field-note create-id-note' });
+  const createBtn = el('button', {
+    class: 'btn-primary',
+    onclick: async () => createItem(currentTemplate(), titleInput.value.trim()),
+    text: 'Create',
+  });
+
+  // "Claim a block": offered inline when the repository allocates in blocks
+  // but this working copy has none. Claiming appends the lowest free block to
+  // the committed registry and records it in the git-ignored local config.
+  const local = model.local || {};
+  const ownerInput = el('input', {
+    class: 'field-input', type: 'text', placeholder: 'handle',
+    value: local.handle || local.default_assignee || local.name || '',
+  });
+  const labelInput = el('input', { class: 'field-input', type: 'text', placeholder: 'e.g. windows-pc, macbook, ci-agent' });
+  const claimText = el('p', { class: 'claim-text' });
+  const claimBtn = el('button', { class: 'btn-secondary', text: 'Claim a block', onclick: () => claimBlock() });
+  const claimBox = el('div', { class: 'claim-block' }, [
+    claimText,
+    el('div', { class: 'field-row' }, [
+      el('div', { class: 'field' }, [el('label', { class: 'field-label', text: 'Owner' }), ownerInput]),
+      el('div', { class: 'field' }, [el('label', { class: 'field-label', text: 'Label for this working copy' }), labelInput]),
+    ]),
+    el('div', { class: 'claim-actions' }, [claimBtn]),
+  ]);
+
+  const refresh = () => {
+    const state = allocationState(model);
+    claimBox.hidden = !state.problem;
+    previewBlock.textContent = '';
+    previewNote.textContent = '';
+    previewId.classList.remove('unavailable');
+    try {
+      previewId.textContent = allocateId(model, currentTemplate().type);
+      if (state.entry) previewBlock.textContent = `block ${state.entry.block} · ${describeBlock(state.entry)}`;
+      createBtn.disabled = false;
+    } catch (err) {
+      previewId.textContent = '—';
+      previewId.classList.add('unavailable');
+      previewNote.textContent = err.message;
+      createBtn.disabled = true;
+      if (state.problem) {
+        claimText.textContent =
+          `${allocationProblemMessage(state)} Every working copy owns a block of ${state.blockSize} IDs per type so ` +
+          `parallel clones never collide. Claiming adds one line to ${REGISTRY_PATH} (commit it) and sets id_block in ` +
+          `${LOCAL_PATH} (git-ignored).`;
+      }
+    }
   };
-  typeSelect.addEventListener('change', updatePreview);
-  updatePreview();
+
+  async function claimBlock() {
+    const owner = ownerInput.value.trim();
+    const label = labelInput.value.trim();
+    if (!owner) {
+      showToast('Enter the owner handle for this block.');
+      ownerInput.focus();
+      return;
+    }
+    if (!label) {
+      showToast('Give this working copy a label, for example windows-pc.');
+      labelInput.focus();
+      return;
+    }
+    claimBtn.disabled = true;
+    try {
+      const entry = await store.claimIdBlock({ owner, label });
+      showToast(
+        `Claimed ID block ${entry.block} for ${describeBlock(entry)}. Commit ${REGISTRY_PATH} so no other clone can take it.`,
+        9000
+      );
+      refresh();
+      titleInput.focus();
+    } catch (err) {
+      showToast(`Claim failed: ${err.message}`, 6000);
+    } finally {
+      claimBtn.disabled = false;
+    }
+  }
+
+  typeSelect.addEventListener('change', refresh);
+  refresh();
 
   const form = el('div', { class: 'modal' }, [
     el('h2', { text: 'New work item' }),
     el('div', { class: 'field' }, [el('label', { class: 'field-label', text: 'Type / template' }), typeSelect]),
     el('div', { class: 'field' }, [el('label', { class: 'field-label', text: 'Title' }), titleInput]),
-    el('div', { class: 'field' }, [el('label', { class: 'field-label', text: 'Generated ID' }), previewId]),
+    el('div', { class: 'field' }, [
+      el('label', { class: 'field-label', text: 'Generated ID' }),
+      el('div', { class: 'create-id-row' }, [previewId, previewBlock]),
+      previewNote,
+    ]),
+    claimBox,
     el('div', { class: 'modal-actions' }, [
       el('button', { class: 'btn-link', onclick: () => closeOverlay(), text: 'Cancel' }),
-      el('button', {
-        class: 'btn-primary',
-        onclick: async () => {
-          const sel = typeOptions.find((t) => t.name === typeSelect.value) || typeOptions[0];
-          await createItem(sel, titleInput.value.trim());
-        },
-        text: 'Create',
-      }),
+      createBtn,
     ]),
   ]);
 
@@ -194,8 +272,15 @@ function openCreateDialog() {
 
 async function createItem(template, title) {
   const model = store.model;
-  const ids = [...model.items.keys()].map((p) => p.split('/').pop().replace(/\.md$/i, ''));
-  const id = nextId(template.type, ids);
+  let id;
+  try {
+    // Sequential max+1, or the next number inside this clone's block; never
+    // an ID that another working copy could also generate.
+    id = allocateId(model, template.type);
+  } catch (err) {
+    showToast(err.message, 8000);
+    return;
+  }
   const today = new Date().toISOString().slice(0, 10);
 
   // Start from template metadata (if any), then enforce identity/required fields
