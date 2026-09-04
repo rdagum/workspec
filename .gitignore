@@ -1,2 +1,3 @@
 # Local, user-specific WorkSpec config (SPEC.md §14)
 .workspec/config/user.local.yaml
+.workspec-demo/config/user.local.yaml

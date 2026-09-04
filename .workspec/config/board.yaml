@@ -1,5 +1,5 @@
-name: WorkSpec Demo Board
-description: Reference implementation demo — a small auth/payments product
+name: WorkSpec Board Backlog
+description: Work items for the WorkSpec reference implementation itself (see REVIEW.md)
 spec_version: 1.0
 settings:
   card_fields:
@@ -8,8 +8,7 @@ settings:
     - type
     - priority
     - assignee
-  # detail_display: how the item detail opens.
-  # side-panel-vertical (default) | side-panel-horizontal | floating
+  # detail_display: side-panel-vertical (default) | side-panel-horizontal | floating
   detail_display: floating
 sort:
   fields:
@@ -17,5 +16,5 @@ sort:
     - updated
     - priority
   default:
-    field: updated
+    field: priority
     direction: desc

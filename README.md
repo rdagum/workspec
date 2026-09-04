@@ -286,8 +286,9 @@ server needed.
 ## Running it
 
 **Just double-click `index.html`** (or drag it into a Chrome/Edge window). Then
-click **Open .workspec folder**, select the `.workspec` directory (a demo one
-ships in this repo), and grant read/write when prompted.
+click **Open .workspec folder**, select a `.workspec` directory, and grant
+read/write when prompted. This repo's own backlog lives in `.workspec/`; a
+sample repository for trying the board out ships in `.workspec-demo/`.
 
 That's it — there is nothing to install or serve.
 
@@ -342,7 +343,8 @@ utils/
   yaml.js         order-preserving YAML parser/serializer (purpose-built subset)
   ids.js          ID format / next-id rules
 
-.workspec/        demo repository (config, templates, context, items)
+.workspec/        this project's backlog (config, templates, context, items)
+.workspec-demo/   sample repository for manual testing
 ```
 
 ## Data-handling guarantees
