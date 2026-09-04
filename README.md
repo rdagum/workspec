@@ -297,6 +297,28 @@ That's it — there is nothing to install or serve.
 > permission on `file://`). It's only a static file host and runs none of the
 > app logic.
 
+## Running the tests
+
+The pure modules (`utils/yaml.js`, `utils/ids.js`, `core/parser.js`,
+`core/model.js`) are covered by Node's built-in test runner. There is nothing
+to install: a stock Node LTS (22 or newer) is the only requirement.
+
+```
+node --test                      # discovers test/*.test.js
+node --test "test/*.test.js"     # the same, spelled out
+node --test test/yaml.test.js    # one file
+```
+
+`test/load.js` evaluates the real browser scripts against a stub `window`, so
+the app code is tested exactly as shipped; there is no build step and no
+`package.json`. The fixture corpus in `test/fixtures/items/` is a set of
+complete work-item files (every scalar form, block scalars, nested namespaces,
+comments, CRLF line endings, a BOM). Each one must parse without errors and
+round-trip through `parseItem` → `serializeItem` content-equal to the source;
+see `test/helpers.js` for the exact definition. When you fix a data-handling
+defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
+`.gitattributes` disables line-ending conversion for them.
+
 ## What you can do
 
 - **Board** — Kanban columns from `config/workflow.yaml`; cards show id, title,
@@ -342,6 +364,12 @@ ui/
 utils/
   yaml.js         order-preserving YAML parser/serializer (purpose-built subset)
   ids.js          ID format / next-id rules
+
+test/             node --test suite (not loaded by the browser)
+  load.js         evaluates the scripts above in Node against a stub window
+  helpers.js      fixture discovery + the "content-equal" comparison
+  *.test.js       yaml, ids, parser unit tests; roundtrip runs the fixture corpus
+  fixtures/items/ complete work-item files that must round-trip unchanged
 
 .workspec/        this project's backlog (config, templates, context, items)
 .workspec-demo/   sample repository for manual testing

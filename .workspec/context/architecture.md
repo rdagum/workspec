@@ -15,6 +15,16 @@ directory through the browser File System Access API (Chromium only).
 | ui      | `ui/board.js`, `ui/editor.js`, `ui/sidebar.js`, `ui/dom.js` | Views rendered against the store; DOM helpers and restricted Markdown renderer |
 | app     | `app.js`                                | Wiring, repository lifecycle, dialogs, overlay/toast, theme, keyboard |
 
+## Tests (outside the layers, never loaded by the browser)
+
+`test/` holds a `node --test` suite with no dependencies and no build step.
+`test/load.js` evaluates the unchanged browser scripts against a stub `window`
+and returns the `WS` namespace; it is the loader any Node tool (for example a
+future `tools/validate-workspec.js`) should reuse. `test/fixtures/items/` is a
+corpus of complete work-item files that must round-trip content-equal through
+`parseItem` / `serializeItem`; a defect fix in `utils/` or `core/` adds a
+fixture there. Run with `node --test`.
+
 ## Invariants to preserve
 
 - Every read/write goes through `WorkspecFS`.

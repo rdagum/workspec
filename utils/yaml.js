@@ -339,7 +339,7 @@ function splitDocument(text) {
 /** Reassemble a file from a (possibly serialized) front matter string and body. */
 function joinDocument(frontMatterText, body) {
   const fm = frontMatterText.replace(/\s+$/, '');
-  return `---\n${fm}\n---\n\n${body.replace(/^\n+/, '')}`;
+  return `---\n${fm}\n---\n\n${body.replace(/^(?:\r?\n)+/, '')}`;
 }
 
 /**
