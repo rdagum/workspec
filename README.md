@@ -293,6 +293,19 @@ sample repository for trying the board out ships in `.workspec-demo/`.
 
 That's it — there is nothing to install or serve.
 
+**Reopening is one click.** Every repository you open is remembered (the
+directory handle and the board name go into the browser's IndexedDB, nothing
+is written to the repository). Next time, the empty state and the **▾** next
+to the open button list your **recent repositories**, most recent first, up to
+eight. Click one and the browser asks for permission on that folder again — no
+directory picker. An entry whose folder has been moved or deleted is shown as
+unavailable and can be removed with **✕**; so can any other entry. Tick
+**Reopen the last repository automatically** if you want the board to try on
+every page load; it is off by default, and because a page load carries no
+click the browser may still ask once, so the entry is focused and Enter
+reopens it. The list is per browser profile and per origin, so `file://` and
+`http://127.0.0.1` each keep their own.
+
 > Optional: a `run.sh` is included if you'd rather serve over
 > `http://127.0.0.1:8000` (some Chrome versions are stricter about write
 > permission on `file://`). It's only a static file host and runs none of the

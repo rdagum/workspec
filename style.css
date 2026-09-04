@@ -409,3 +409,51 @@ body.unsupported .unsupported-banner {
   padding: 10px 16px; border-bottom: 1px solid var(--warn); text-align: center;
 }
 body.unsupported .board-mount, body.unsupported #sidebar-mount { opacity: 0.4; pointer-events: none; }
+
+/* ---- Recent repositories (empty state + open-button menu) --------------- */
+.recent { margin: 32px auto 0; max-width: 460px; text-align: left; }
+.recent-title {
+  margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-faint);
+}
+.recent-empty { margin: 0; font-size: 12px; color: var(--text-faint); }
+.recent-list {
+  list-style: none; margin: 0; padding: 0; overflow: hidden;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.recent-entry { display: flex; align-items: stretch; border-top: 1px solid var(--border); }
+.recent-entry:first-child { border-top: none; }
+.recent-open {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  padding: 10px 12px; text-align: left; background: none; border: none; border-radius: 0;
+  color: var(--text);
+}
+.recent-open:hover, .recent-open:focus-visible { background: var(--bg-3); outline: none; }
+.recent-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-sub { font-size: 12px; color: var(--text-dim); }
+.recent-entry.unavailable .recent-name { color: var(--text-faint); text-decoration: line-through; }
+.recent-entry.unavailable .recent-sub { color: var(--warn); }
+.recent-forget {
+  flex: 0 0 auto; padding: 0 12px; background: none; border: none; border-radius: 0;
+  border-left: 1px solid var(--border); color: var(--text-faint);
+}
+.recent-forget:hover, .recent-forget:focus-visible { color: var(--danger); background: var(--bg-3); outline: none; }
+.recent-auto {
+  display: flex; align-items: center; gap: 8px; margin-top: 10px;
+  font-size: 12px; color: var(--text-dim); cursor: pointer;
+}
+.recent-auto-input { margin: 0; }
+
+/* Split "Open" button: the main action plus a ▾ that drops the recent list. */
+.open-group { position: relative; display: inline-flex; }
+.open-group #open-btn { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.open-menu-btn {
+  border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 8px 9px;
+  border-left: 1px solid rgba(255, 255, 255, 0.25);
+}
+.menu {
+  position: absolute; top: 100%; right: 0; margin-top: 6px; width: 340px; z-index: 70;
+  background: var(--panel); border: 1px solid var(--border-2); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 12px 14px; text-align: left;
+}
+.menu .recent { margin: 0; max-width: none; }

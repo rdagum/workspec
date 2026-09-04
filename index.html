@@ -19,7 +19,13 @@
       <div class="topbar-actions">
         <button id="theme-btn" class="btn-secondary" title="Toggle light/dark theme">☀</button>
         <button id="refresh-btn" class="btn-secondary" title="Reload config and items from disk" disabled>↻ Refresh</button>
-        <button id="open-btn" class="btn-primary">Open .workspec folder</button>
+        <div class="open-group">
+          <button id="open-btn" class="btn-primary">Open .workspec folder</button>
+          <button id="open-menu-btn" class="btn-primary open-menu-btn" title="Recent repositories"
+                  aria-label="Recent repositories" aria-haspopup="true" aria-expanded="false">▾</button>
+          <!-- Recent repositories + the auto-reopen preference; filled by app.js. -->
+          <div id="open-menu" class="menu" hidden></div>
+        </div>
       </div>
     </header>
 
@@ -52,7 +58,9 @@
     <script src="core/allocation.js"></script>
     <script src="core/model.js"></script>
     <script src="core/filesystem.js"></script>
+    <script src="core/recent.js"></script>
     <script src="state/store.js"></script>
+    <script src="ui/recent.js"></script>
     <script src="ui/board.js"></script>
     <script src="ui/editor.js"></script>
     <script src="ui/sidebar.js"></script>

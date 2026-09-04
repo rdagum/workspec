@@ -5,7 +5,7 @@
 (function (WS) {
 'use strict';
 
-const { el, clear } = WS;
+const { el, clear, renderRecentList } = WS;
 
 const TYPE_CLASS = {
   EPIC: 'type-epic',
@@ -16,12 +16,17 @@ const TYPE_CLASS = {
 };
 
 class BoardView {
-  constructor(store, { onOpenItem, onDeleteItem } = {}) {
+  constructor(store, { onOpenItem, onDeleteItem, onOpenRecent, onForgetRecent, onSetAutoReopen } = {}) {
     this.store = store;
     // Opening goes through a handler so the app can flush unsaved edits to the
     // previously open item first; falls back to a plain open.
     this.onOpenItem = onOpenItem || ((path) => this.store.open(path));
     this.onDeleteItem = onDeleteItem || (() => {});
+    // Remembered repositories shown in the empty state (F1); the app owns the
+    // reopen flow and the preference, the board only renders the list.
+    this.onOpenRecent = onOpenRecent || null;
+    this.onForgetRecent = onForgetRecent || (() => {});
+    this.onSetAutoReopen = onSetAutoReopen || (() => {});
     this.root = el('div', { class: 'board', id: 'board' });
   }
 
@@ -177,10 +182,25 @@ class BoardView {
   }
 
   _emptyState() {
-    return el('div', { class: 'board-empty' }, [
+    const { recent = [], autoReopen = false } = this.store.state;
+    const empty = el('div', { class: 'board-empty' }, [
       el('h2', { text: 'No repository loaded' }),
       el('p', { text: 'Open a .workspec folder to get started.' }),
     ]);
+    // The recent list (and its auto-reopen preference) only appears once there
+    // is something to reopen, so a first visit stays a single call to action.
+    if (this.onOpenRecent && recent.length) {
+      empty.append(
+        renderRecentList({
+          entries: recent,
+          autoReopen,
+          onOpen: this.onOpenRecent,
+          onForget: this.onForgetRecent,
+          onSetAutoReopen: this.onSetAutoReopen,
+        })
+      );
+    }
+    return empty;
   }
 }
 

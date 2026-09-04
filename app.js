@@ -7,6 +7,8 @@
 'use strict';
 
 const { WorkspecFS, isSupported } = WS;
+const { RecentRepositories, IndexedDbStore, probeHandle, isMissingError } = WS;
+const { renderRecentList } = WS;
 const { loadRepository, detailDisplay } = WS;
 const { Store } = WS;
 const { BoardView } = WS;
@@ -27,7 +29,13 @@ async function openItem(path) {
   if (store.state.selectedPath && store.state.selectedPath !== path) await flushOpenEditor();
   store.open(path);
 }
-const board = new BoardView(store, { onOpenItem: openItem, onDeleteItem: (path) => confirmDelete(path) });
+const board = new BoardView(store, {
+  onOpenItem: openItem,
+  onDeleteItem: (path) => confirmDelete(path),
+  onOpenRecent: (entry) => openRecent(entry),
+  onForgetRecent: (entry) => forgetRecent(entry),
+  onSetAutoReopen: (on) => setAutoReopen(on),
+});
 const sidebar = new SidebarView(store, {
   onNewItem: () => openCreateDialog(),
   onOpenContext: async (path) => {
@@ -46,6 +54,8 @@ const refs = {
   repoName: document.getElementById('repo-name'),
   boardName: document.getElementById('board-name'),
   openBtn: document.getElementById('open-btn'),
+  openMenuBtn: document.getElementById('open-menu-btn'),
+  openMenu: document.getElementById('open-menu'),
   refreshBtn: document.getElementById('refresh-btn'),
   themeBtn: document.getElementById('theme-btn'),
 };
@@ -71,6 +81,7 @@ store.subscribe((state) => {
     lastEditorKey = editorKey;
   }
   renderContextOverlay();
+  if (!refs.openMenu.hidden) renderOpenMenu();
 
   refs.repoName.textContent = state.model ? state.model.name : '';
   refs.boardName.textContent = state.model ? state.model.board.name || '' : 'WorkSpec';
@@ -102,23 +113,156 @@ async function openRepository() {
       store.set({ status: 'idle' });
       return;
     }
-    const model = await loadRepository(fs);
-    applyTheme(model.local && model.local.theme);
-    store.set({ fs, model, sort: sortDefault(model), status: 'ready', selectedPath: null, contextPath: null });
-    const errs = model.loadErrors.length;
-    showToast(
-      `Loaded ${model.items.size} item(s)` + (errs ? `, ${errs} file error(s)` : ''),
-      errs ? 6000 : 3000
-    );
+    await loadInto(fs);
   } catch (err) {
     if (err && err.name === 'AbortError') {
       store.set({ status: 'idle' });
       return;
     }
-    store.set({ status: 'error' });
-    showToast(`Could not load repository: ${err.message}`, 8000);
-    console.error(err);
+    reportLoadError(err);
   }
+}
+
+/**
+ * Reopen a remembered repository (F1): re-request permission on the stored
+ * handle — one click, no directory picker — and load it. Returns true on
+ * success. With `silent` (the auto-reopen on page load) a refused permission
+ * just leaves the empty state, where the entry can be clicked instead.
+ */
+async function openRecent(entry, { silent = false } = {}) {
+  if (!entry || !isSupported()) return false;
+  closeOpenMenu();
+  try {
+    store.set({ status: 'loading', message: '' });
+    const fs = new WorkspecFS(entry.handle);
+    if (!(await fs.ensurePermission())) {
+      store.set({ status: 'idle' });
+      if (!silent) showToast(`Access to ${entry.name} was not granted.`, 5000);
+      return false;
+    }
+    // loadRepository tolerates missing sub-directories, so a deleted or moved
+    // folder would otherwise load as an empty repository; check it first.
+    if ((await probeHandle(entry.handle)) === 'missing') {
+      throw Object.assign(new Error('The folder no longer exists.'), { name: 'NotFoundError' });
+    }
+    await loadInto(fs);
+    return true;
+  } catch (err) {
+    if (isMissingError(err)) {
+      await markUnavailable(entry);
+      store.set({ status: 'idle' });
+      showToast(`${entry.name} is unavailable: the folder was moved or deleted.`, 7000);
+      return false;
+    }
+    // Without a user gesture the browser refuses to prompt for permission;
+    // for the automatic reopen that is the expected outcome, not an error.
+    if (silent && err && (err.name === 'SecurityError' || err.name === 'NotAllowedError')) {
+      store.set({ status: 'idle' });
+      return false;
+    }
+    reportLoadError(err);
+    return false;
+  }
+}
+
+/** Read the repository from an open backend, publish it and remember it. */
+async function loadInto(fs) {
+  const model = await loadRepository(fs);
+  applyTheme(model.local && model.local.theme);
+  store.set({ fs, model, sort: sortDefault(model), status: 'ready', selectedPath: null, contextPath: null });
+  const errs = model.loadErrors.length;
+  showToast(
+    `Loaded ${model.items.size} item(s)` + (errs ? `, ${errs} file error(s)` : ''),
+    errs ? 6000 : 3000
+  );
+  await rememberRepository(fs, model);
+}
+
+function reportLoadError(err) {
+  store.set({ status: 'error' });
+  showToast(`Could not load repository: ${err.message}`, 8000);
+  console.error(err);
+}
+
+// --- Recent repositories (F1) ----------------------------------------------
+
+// Directory handles persisted in IndexedDB by core/recent.js. `null` when the
+// browser offers no IndexedDB: the board then simply never lists anything.
+const recent = IndexedDbStore.available() ? new RecentRepositories(new IndexedDbStore(window.indexedDB)) : null;
+
+async function rememberRepository(fs, model) {
+  if (!recent) return;
+  try {
+    // The picked directory is always called `.workspec`, so the board name
+    // from board.yaml is what identifies the repository to the user.
+    await recent.remember({ handle: fs.root, name: model.board.name || fs.name });
+    await refreshRecent();
+  } catch (err) {
+    console.warn('Could not remember the repository:', err);
+  }
+}
+
+// Reload the list into the store, flagging entries whose directory is gone.
+// That check needs an existing permission grant; entries the browser would
+// have to prompt for stay listed as they are until they are clicked.
+async function refreshRecent() {
+  if (!recent) return;
+  try {
+    const entries = await recent.list();
+    for (const entry of entries) {
+      if (!entry.unavailable && (await probeHandle(entry.handle)) === 'missing') {
+        entry.unavailable = true;
+        await recent.setUnavailable(entry.key, true);
+      }
+    }
+    store.set({ recent: entries });
+  } catch (err) {
+    console.warn('Recent repositories are unavailable:', err);
+  }
+}
+
+async function markUnavailable(entry) {
+  if (!recent) return;
+  try {
+    await recent.setUnavailable(entry.key, true);
+    await refreshRecent();
+  } catch (err) {
+    console.warn('Could not update the recent repositories:', err);
+  }
+}
+
+async function forgetRecent(entry) {
+  if (!recent) return;
+  try {
+    await recent.forget(entry.key);
+    await refreshRecent();
+    showToast(`Removed ${entry.name} from recent repositories.`);
+  } catch (err) {
+    showToast(`Could not remove the entry: ${err.message}`, 5000);
+  }
+}
+
+// Topbar ▾ menu: the same list as the empty state, reachable while a
+// repository is open. Rebuilt from the store each time it is shown.
+function renderOpenMenu() {
+  const { recent: entries = [], autoReopen } = store.state;
+  refs.openMenu.replaceChildren(
+    renderRecentList({
+      entries,
+      autoReopen,
+      onOpen: (entry) => openRecent(entry),
+      onForget: forgetRecent,
+      onSetAutoReopen: setAutoReopen,
+    })
+  );
+}
+function toggleOpenMenu(open = refs.openMenu.hidden) {
+  if (open) renderOpenMenu();
+  refs.openMenu.hidden = !open;
+  refs.openMenuBtn.setAttribute('aria-expanded', String(open));
+}
+function closeOpenMenu() {
+  if (!refs.openMenu.hidden) toggleOpenMenu(false);
 }
 
 // Re-read config, items, templates and context from the already-open folder
@@ -408,6 +552,27 @@ function toggleTheme() {
   }
 }
 
+// "Reopen the last repository automatically" (F1). Stored next to the theme
+// choice in localStorage; off by default, because on most origins the browser
+// still asks for permission on every page load.
+const AUTO_REOPEN_KEY = 'workspec.autoReopen';
+function storedAutoReopen() {
+  try {
+    return localStorage.getItem(AUTO_REOPEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+function setAutoReopen(on) {
+  try {
+    if (on) localStorage.setItem(AUTO_REOPEN_KEY, '1');
+    else localStorage.removeItem(AUTO_REOPEN_KEY);
+  } catch {
+    /* ignore — the choice just won't persist across reloads */
+  }
+  store.set({ autoReopen: !!on });
+}
+
 // Initial sort from board.yaml's `sort.default` (falls back to unsorted/desc).
 function sortDefault(model) {
   const d = (model.board && model.board.sort && model.board.sort.default) || {};
@@ -479,7 +644,9 @@ function showToast(message, ms = 3000) {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (refs.overlay.classList.contains('open')) {
+    if (!refs.openMenu.hidden) {
+      closeOpenMenu();
+    } else if (refs.overlay.classList.contains('open')) {
       closeOverlay();
     } else if (store.state.selectedPath) {
       editor.handleEscape();
@@ -496,6 +663,11 @@ document.addEventListener('keydown', (e) => {
 });
 
 refs.openBtn.addEventListener('click', openRepository);
+refs.openMenuBtn.addEventListener('click', () => toggleOpenMenu());
+// Clicking anywhere outside the split button closes the recent-repositories menu.
+document.addEventListener('click', (e) => {
+  if (!refs.openMenu.hidden && !(e.target.closest && e.target.closest('.open-group'))) closeOpenMenu();
+});
 refs.refreshBtn.addEventListener('click', refreshRepository);
 refs.themeBtn.addEventListener('click', toggleTheme);
 // Clicking the floating-mode backdrop closes the open item (save-on-close guarded).
@@ -510,4 +682,21 @@ if (!isSupported()) {
 }
 
 store.emit(); // initial paint
+
+// List the remembered repositories and, when the preference is on, reopen the
+// last one. A page load carries no user gesture, so the browser may refuse to
+// prompt; then the entry is focused so a single Enter or click finishes it.
+async function start() {
+  store.set({ autoReopen: storedAutoReopen() });
+  await refreshRecent();
+  const last = store.state.recent[0];
+  if (!store.state.autoReopen || !last || last.unavailable || !isSupported()) return;
+  if (await openRecent(last, { silent: true })) return;
+  const current = store.state.recent.find((r) => r.key === last.key);
+  if (store.state.status !== 'idle' || !current || current.unavailable) return;
+  const first = refs.boardMount.querySelector('.recent-open');
+  if (first) first.focus();
+  showToast(`Press Enter or click "${last.name}" to reopen it.`, 6000);
+}
+start();
 })(window.WS = window.WS || {});

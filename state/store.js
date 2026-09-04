@@ -29,6 +29,8 @@ class Store {
       dirty: false, // unsaved edits in the open editor
       status: 'idle', // idle | loading | ready | error
       message: '',
+      recent: [], // remembered repositories, newest first (core/recent.js)
+      autoReopen: false, // "reopen the last repository on load" preference
     };
     this._listeners = new Set();
   }

@@ -10,9 +10,9 @@ directory through the browser File System Access API (Chromium only).
 | Layer   | Files                                   | Responsibility |
 |---------|-----------------------------------------|----------------|
 | utils   | `utils/yaml.js`, `utils/ids.js`         | Order-preserving YAML subset engine; ID format and next-id rules |
-| core    | `core/filesystem.js`, `core/parser.js`, `core/allocation.js`, `core/model.js` | File access seam; parse/validate/serialize items; per-clone ID blocks, cross-file validation and renumber plans (pure); repository loader and board model |
+| core    | `core/filesystem.js`, `core/recent.js`, `core/parser.js`, `core/allocation.js`, `core/model.js` | File access seam; remembered directory handles in IndexedDB (native backend only, list logic pure); parse/validate/serialize items; per-clone ID blocks, cross-file validation and renumber plans (pure); repository loader and board model |
 | state   | `state/store.js`                        | Observable state bag, derived selectors, mutations that write files |
-| ui      | `ui/board.js`, `ui/editor.js`, `ui/sidebar.js`, `ui/dom.js` | Views rendered against the store; DOM helpers and restricted Markdown renderer |
+| ui      | `ui/board.js`, `ui/editor.js`, `ui/sidebar.js`, `ui/recent.js`, `ui/dom.js` | Views rendered against the store; recent-repositories list; DOM helpers and restricted Markdown renderer |
 | app     | `app.js`                                | Wiring, repository lifecycle, dialogs, overlay/toast, theme, keyboard |
 
 ## Tests (outside the layers, never loaded by the browser)
