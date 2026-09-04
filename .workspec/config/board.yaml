@@ -1,5 +1,5 @@
 name: WorkSpec Board Backlog
-description: Work items for the WorkSpec reference implementation itself (see REVIEW.md)
+description: Work items for the WorkSpec reference implementation itself (see docs/REVIEW-2026-09.md)
 spec_version: 1.0
 settings:
   card_fields:

@@ -27,5 +27,5 @@ directory through the browser File System Access API (Chromium only).
 
 - `SPEC.md` — the WorkSpec specification the app implements.
 - `PROMPT.md` — requirements for this reference implementation.
-- `REVIEW.md` — architecture and code review (2026-09-04); work items A1–A8 and F1–F5 derive from it.
+- `docs/REVIEW-2026-09.md` — architecture and code review (2026-09-04); work items A1–A8 and F1–F5 derive from it.
 - `.workspec-demo/` — a sample repository used for manual testing; not the project backlog.
