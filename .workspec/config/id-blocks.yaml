@@ -4,3 +4,6 @@
 blocks:
   - { block: 1, owner: rdagum, label: windows-pc, claimed: 2026-09-04 }
   - { block: 2, owner: rdagum, label: macbook, claimed: 2026-09-04 }
+  - { block: 3, owner: Sonnet, claimed: 2026-09-09 }
+  - { block: 4, owner: Opus, claimed: 2026-09-09 }
+  - { block: 5, owner: Fable, claimed: 2026-09-09 }

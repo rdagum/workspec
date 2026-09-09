@@ -1,3 +1,10 @@
 users:
   - name: Rodolfo Dagum
     handle: rdagum
+  - name: Fable Agent
+    handle: Fable
+  - name: Opus Agent
+    handle: Opus
+  - name: Sonnet Agent
+    handle: Sonnet
+
