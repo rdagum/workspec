@@ -52,6 +52,7 @@ class SidebarView {
       el('label', { class: 'sb-label', text: 'Filter' }),
       this._select('type', 'Type', facets.type, f.type),
       this._select('status', 'Status', facets.status, f.status),
+      this._select('priority', 'Priority', facets.priority, f.priority),
       this._select('assignee', 'Assignee', facets.assignee, f.assignee),
       this._select('label', 'Label', facets.label, f.label),
       el('button', {

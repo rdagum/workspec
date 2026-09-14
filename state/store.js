@@ -11,11 +11,11 @@
 (function (WS) {
 'use strict';
 
-const { buildColumns, distinctValues, sortItems } = WS;
+const { buildColumns, distinctValues, sortItems, PRIORITY_RANK } = WS;
 const { serializeItem, changeStatus, validateItem } = WS;
 const { knownIds, lowestFreeBlock, appendBlockEntry, setLocalKeys, REGISTRY_PATH, LOCAL_PATH } = WS;
 
-const emptyFilters = () => ({ text: '', type: '', status: '', assignee: '', label: '' });
+const emptyFilters = () => ({ text: '', type: '', status: '', priority: '', assignee: '', label: '' });
 
 class Store {
   constructor() {
@@ -72,6 +72,7 @@ class Store {
       const m = r.meta || {};
       if (filters.type && String(m.type) !== filters.type) return false;
       if (filters.status && String(m.status) !== filters.status) return false;
+      if (filters.priority && String(m.priority || '') !== filters.priority) return false;
       if (filters.assignee && String(m.assignee || '') !== filters.assignee) return false;
       if (filters.label) {
         const labels = Array.isArray(m.labels) ? m.labels.map(String) : [];
@@ -100,6 +101,11 @@ class Store {
     return {
       type: distinctValues(items, 'type'),
       status: this.model ? this.model.workflow : [],
+      // Priority is categorical: most urgent first, then anything unranked
+      // (a typo, a project's own level) in alphabetical order.
+      priority: distinctValues(items, 'priority').sort(
+        (a, b) => (PRIORITY_RANK[String(b).toLowerCase()] || 0) - (PRIORITY_RANK[String(a).toLowerCase()] || 0) || String(a).localeCompare(String(b))
+      ),
       assignee: distinctValues(items, 'assignee'),
       label: distinctValues(items, 'labels'),
     };
