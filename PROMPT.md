@@ -223,6 +223,7 @@ Load:
 ```text
 .workspec/config/board.yaml
 .workspec/config/workflow.yaml
+.workspec/config/ai.yaml         (optional; SPEC.md 18.2)
 ```
 
 These define:
@@ -230,6 +231,17 @@ These define:
 * board name
 * columns
 * optional UI settings
+
+---
+
+## 4.10 AI Usage
+
+When items carry `agent.runs` (SPEC.md 18.2), the UI MUST derive — never store — cost and budget state from those runs and the optional `.workspec/config/ai.yaml`.
+
+* Cards MAY show the item's cost (a list-price equivalent) and MUST mark an item that exceeds its budget.
+* The editor MUST render `agent.runs` and `agent.budget_usd` as a structured section: runs read-only, budget editable, a way to add a run. Every other key under `agent:` MUST be left intact.
+* The board SHOULD show usage totals for the visible items.
+* Only `agent.budget_usd` and appended runs are ever written; derived values are not.
 
 ---
 
@@ -350,6 +362,7 @@ The system MUST validate:
 * required fields presence
 * valid status values
 * valid ID format
+* `agent.runs` shape and budget state when present (SPEC.md 18.2)
 
 Errors MUST be shown in UI.
 

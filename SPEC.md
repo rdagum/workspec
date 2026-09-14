@@ -68,6 +68,8 @@ WorkSpec is **not** intended to define:
 
 Implementations MAY provide these features, but they are outside the scope of the specification.
 
+AI usage accounting (18.2) is not time tracking: it records the resource consumption of automated agents — tokens and their list-price equivalent — never human time.
+
 ---
 
 # 2. Goals
@@ -288,6 +290,7 @@ Optional:
 users.yaml
 templates.yaml
 id-blocks.yaml   (see 18.1)
+ai.yaml          (see 18.2)
 ```
 
 Unknown configuration files MUST be preserved.
@@ -656,6 +659,74 @@ A duplicate ID that reaches a merge is repaired by renumbering the item on the s
 
 ---
 
+## 18.2 AI Usage and Budgets (WS-1.2 extension)
+
+**Status:** optional extension introduced by WorkSpec 1.2. An implementation that ignores it remains 1.0-compliant. A repository in which no item carries `agent.runs` and no `config/ai.yaml` exists behaves exactly as in 1.0. Design rationale: `docs/DESIGN-2026-09-ai-usage.md`.
+
+### Problem
+
+Work items are consumed by AI agents, and every agent session consumes tokens that cost money. Git records who changed what; it does not record what producing the change cost, and the tools that know (session transcripts) are local and short-lived. Usage is therefore data about the work item, not history, and it belongs in the item.
+
+### Data
+
+Inside the reserved `agent` namespace (18) this extension defines two keys, `budget_usd` and `runs`. Every other key under `agent` remains undefined and MUST be preserved and ignored.
+
+```yaml
+agent:
+  budget_usd: 10
+  runs:
+    - date: 2026-09-09
+      handle: Fable
+      model: claude-fable-5-1
+      input_tokens: 2
+      output_tokens: 8000
+      cache_read_tokens: 900000
+      cache_write_tokens: 40000
+      cache_write_1h_tokens: 12000
+      cost_usd: 1.12
+      purpose: implement
+      ref: https://github.com/rdagum/workspec/pull/12
+      session: c08bb153-da05-4380-a295-7b0fd56f92c5
+      source: claude-code
+      estimated: true
+```
+
+* `runs` is a sequence of mappings, one per agent session on the item. `date` (YYYY-MM-DD), `handle` (a `users.yaml` handle) and `model` are required; every other key is optional. Unknown keys inside a run MUST be preserved.
+* `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens` (five-minute cache writes) and `cache_write_1h_tokens` (one-hour cache writes) are non-negative integers; an absent key means zero.
+* `cost_usd` and `budget_usd` are non-negative decimals in US dollars.
+* `session` identifies the producing tool's session and makes imports idempotent. `source` names the tool (`manual` for a hand-written run). `estimated: true` marks approximate or trimmed numbers.
+
+### Configuration
+
+`.workspec/config/ai.yaml`, optional, committed:
+
+```yaml
+pricing:                     # list-price equivalents per million tokens
+  claude-fable-5-1: { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0 }
+defaults:
+  budget_usd: { STORY: 10, BUG: 5, TASK: 3, SPIKE: 5 }
+policy:
+  require_usage: true
+  require_usage_from: Review   # a workflow column; default: the last column
+```
+
+Entries in `users.yaml` MAY carry `kind: agent` (and `model`) to distinguish agents from people.
+
+### Rules
+
+* Runs are facts. An implementation MUST append; it MUST NOT edit, reorder or remove existing runs, and MUST NOT change `updated` when appending a run.
+* Everything else is derived and MUST NOT be stored. The cost of a run is `cost_usd` when present, otherwise its tokens priced by `pricing[model]`, otherwise unknown. The cost of an item is the sum over its runs, unknown if any run is unknown. The roll-up of an epic is the sum over the items that reach it through `parent`.
+* A derived cost is a list-price equivalent, not an invoice.
+* The budget of an item is `agent.budget_usd`, else `defaults.budget_usd` for its type, else none. An item whose cost exceeds its budget is over budget. That is a warning for validators and a stop rule for agents (`SKILL.md`), not a repository error.
+* Two branches that both append a run to the same item conflict on the same lines; the resolution is to keep both runs. Order is not significant.
+* Appending a run SHOULD be a line-level edit that leaves every other line of the file unchanged (15).
+
+### Validation
+
+An implementation SHOULD report as errors: `agent` that is not a mapping, `runs` that is not a sequence, a run that is not a mapping or lacks `date`, `handle` or `model`, a malformed date, and a negative or non-numeric number. It SHOULD report as warnings: a model absent from a non-empty `pricing`, an item over budget, a `handle` not in `users.yaml`, two runs with the same `source`, `session` and `model`, a run dated before the item's `created`, and — when `policy.require_usage` is set — an item assigned to a `kind: agent` user whose status is `require_usage_from` or a later column and which has no `runs` key. `runs: []` satisfies the policy explicitly.
+
+---
+
 # 19. Appendix A — Canonical YAML Layout
 
 This appendix will contain a fully populated example of every field in the required order, serving as the reference layout for all templates.
@@ -665,4 +736,6 @@ This appendix will contain a fully populated example of every field in the requi
 # 20. Appendix B — Reserved Fields
 
 This appendix will enumerate reserved keywords, future-proofing guidance, and rules for introducing new metadata without breaking existing implementations.
+
+Reserved by 18.2 inside the `agent` namespace: `budget_usd` and `runs`; inside a run: `date`, `handle`, `model`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `cache_write_1h_tokens`, `cost_usd`, `purpose`, `ref`, `session`, `source`, `estimated`.
 

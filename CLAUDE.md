@@ -100,6 +100,6 @@ Background: `SPEC.md` §18.1 (normative), `docs/REVIEW-2026-09.md` §3 (design r
 
 Items live in `.workspec/items/TYPE-NNNNNN.md`. Locate work by ID, not by title. Read the entire item — the YAML carries the structured requirements, the Markdown carries the reasoning — then load anything listed under `context:` before planning. Check `depends_on` / `blocks` / `parent` before implementing and say so if a dependency blocks the work.
 
-When work starts, update `status`, `updated`, and `assignee` if appropriate; when it finishes, `status` and `updated`. Never touch `id`, `created`, or `type`. Do not add changelog or history metadata to items — Git already records that.
+When work starts, update `status`, `updated`, and `assignee` if appropriate; when it finishes, `status` and `updated`. Never touch `id`, `created`, or `type`. Do not add changelog or history metadata to items — Git already records that. The one exception is `agent.runs` (`SPEC.md` §18.2, `docs/DESIGN-2026-09-ai-usage.md`): AI usage is data Git does not record, so a run is appended there and never edited.
 
 Before considering an item done: acceptance criteria and definition of done satisfied, `node --test` green, `node tools/validate-workspec.js .workspec` clean, and no unrelated files touched. `SKILL.md` has the full checklist.

@@ -261,6 +261,8 @@ Do not create additional history logs inside WorkSpec.
 
 Do not maintain changelog metadata inside work items.
 
+The one exception is `agent.runs` (SPEC.md 18.2): what a change cost to produce is data Git does not record, so a usage run is appended there — and never edited (see "AI Usage and Budgets").
+
 ---
 
 # Creating New Work Items
@@ -297,6 +299,28 @@ IDs are immutable. The single exception is a duplicate ID created by two working
 * Take the new ID from your own block.
 * Use the repository's tool (`node tools/renumber.js OLD-ID NEW-ID`, with `--body` to rewrite Markdown mentions) rather than editing by hand, so the file name, the `id:` line and every reference in `parent`, `depends_on`, `blocks` and `related` change together.
 * Commit the renumber on its own.
+
+---
+
+# AI Usage and Budgets
+
+When the repository enables SPEC.md 18.2 (any item carries `agent.runs`, or `.workspec/config/ai.yaml` exists), your sessions are accounted for on the items they work.
+
+Before starting an item:
+
+* Derive what it has already cost against its budget: `node tools/usage-report.js ID --json` when the repository ships it, otherwise sum `agent.runs` by hand against `agent.budget_usd` or the type default in `config/ai.yaml`.
+* If the budget is spent, do not start. Unattended: open a draft pull request titled `[over budget] …` that describes what you would have done, leave the item where it is, and report. Attended: say so and ask.
+* If the item's expected cost exceeds its type default, propose splitting it before you start.
+* Prefer the cheapest model that can do the job.
+
+After the work, on every exit path (finished, blocked, over budget):
+
+* Append one run per model to `agent.runs`: from the session transcript with `node tools/record-usage.js ID --from-transcript=…` when the repository ships it (subagent transcripts included), otherwise by hand with `estimated: true`. Do it before the pull request is merged; transcripts do not live forever.
+* You cannot read your own usage while you run; the numbers exist only in the transcript. Do not guess them mid-run.
+* A session that touched several items records on each what it can apportion. Triage that belongs to no item goes on the parent epic with `purpose: triage`.
+* Do not change `updated` when appending a run.
+
+Never edit or remove a recorded run. When a merge conflicts on `agent.runs`, keep both sides.
 
 ---
 
@@ -340,6 +364,8 @@ Do not:
 * ignore acceptance criteria
 * ignore Definition of Done
 * bypass repository conventions
+* edit or delete a recorded usage run (SPEC.md 18.2)
+* start an item whose AI budget is spent
 
 ---
 
@@ -355,6 +381,7 @@ Before considering work complete, verify:
 * Validation completed successfully.
 * Metadata was updated.
 * Unrelated files were not modified.
+* Usage was recorded when the repository enables AI usage (SPEC.md 18.2).
 * WorkSpec compliance was preserved.
 
 Only after all applicable checks pass should the work be considered complete.

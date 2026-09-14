@@ -218,7 +218,7 @@ WorkSpec intentionally relies on Git for:
 * Change tracking
 * Repository synchronization
 
-WorkSpec does not duplicate these capabilities.
+WorkSpec does not duplicate these capabilities. The one per-run record an item may hold is `agent.runs` (see "Tracking AI usage" below): what a change cost to produce is data Git does not record.
 
 ---
 
@@ -442,6 +442,51 @@ are immutable; the branch adapts. This is the one sanctioned exception to
 
 Repositories that do not set `id_allocation` keep the sequential behaviour and
 only gain the duplicate-ID and filename checks.
+
+## Tracking AI usage
+
+Items are worked by AI agents, and every session consumes tokens. Git records
+who changed what, not what it cost, and the transcripts that know are local and
+short-lived — so a run's usage is recorded on the item itself, under the
+reserved `agent:` namespace (`SPEC.md` §18.2; design:
+`docs/DESIGN-2026-09-ai-usage.md`):
+
+```yaml
+agent:
+  budget_usd: 10
+  runs:
+    - date: 2026-09-09
+      handle: Fable
+      model: claude-fable-5-1
+      input_tokens: 2
+      output_tokens: 8000
+      cache_read_tokens: 900000
+      cache_write_tokens: 40000
+      session: c08bb153-da05-4380-a295-7b0fd56f92c5
+      source: claude-code
+```
+
+Runs are facts: tokens by kind, model, handle, date. They are appended, never
+edited, and appending one does not bump `updated`. Everything else is derived
+when the repository loads — the cost of a run from an optional pricing table in
+`config/ai.yaml` (a list-price equivalent, so it means the same thing whether
+you pay per token or by subscription), an item's total, an epic's roll-up over
+its children, and whether the item is over its budget (`agent.budget_usd`, else
+the per-type default in `ai.yaml`). Nothing derived is written back. Two
+branches that each append a run to the same item conflict on the same lines;
+keep both.
+
+**Budgets are a rule for agents, not for CI.** The validator warns on
+`over-budget` and on an agent-assigned item that reached review without runs
+(`missing-usage`); an agent checks the budget before it starts and stops if it
+is spent (`SKILL.md` "AI Usage and Budgets"). CI stays green.
+
+The command-line tools ship with STORY-001002: `tools/record-usage.js` appends
+a run — by hand, or from a Claude Code session transcript including its
+subagents — with a line-level edit that leaves every other line of the file
+untouched, and `tools/usage-report.js` prints totals by status, assignee,
+model, type, label or epic, or one item's spent, budget and remaining. The
+board's cost chip, editor section and sidebar totals ship with STORY-001003.
 
 ## Project layout
 
