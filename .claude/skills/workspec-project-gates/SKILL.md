@@ -90,7 +90,9 @@ scripts. That leaves entirely untested:
 - `ui/board.js`, `ui/dom.js`, `ui/editor.js`, `ui/recent.js`, `ui/sidebar.js`
 - `core/filesystem.js`
 
-A change to any of those **passes every gate above while being completely
+`test/syntax.test.js` compiles every script `index.html` lists, so a change to
+one of those files that does not *parse* now fails `node --test`; a change that
+parses but misbehaves still **passes every gate above while being completely
 unverified**. Do not report such a change as tested. Verify it by hand — run
 `./run.sh`, open `http://127.0.0.1:9000` in a Chromium browser (Chrome or Edge;
 the File System Access API is required), click **Open .workspec folder**, and

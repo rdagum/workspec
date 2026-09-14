@@ -10,6 +10,7 @@
 
 const { parseItem, parseConfig, validateItem } = WS;
 const { parseIdAllocation, parseIdBlocks, validateRepository, REGISTRY_PATH } = WS;
+const { parseAiConfig, AI_CONFIG_PATH } = WS;
 
 const SUPPORTED_MAJOR = 1;
 
@@ -51,6 +52,9 @@ async function loadRepository(fs) {
     templates: [],
     context: [],
     users: [],
+    // AI usage pricing, budget defaults and policy (SPEC.md §18.2); the
+    // empty shape when config/ai.yaml is absent.
+    ai: parseAiConfig(null),
     local: {},
     loadErrors: [],
     warnings: [],
@@ -117,11 +121,30 @@ async function loadRepository(fs) {
       if (error) model.loadErrors.push({ file: 'config/users.yaml', message: error });
       const list = Array.isArray(data) ? data : Array.isArray(data.users) ? data.users : [];
       model.users = list
-        .map((u) => (typeof u === 'string' ? { handle: u, name: u } : { handle: u.handle || u.name, name: u.name || u.handle }))
+        .map((u) => {
+          if (typeof u === 'string') return { handle: u, name: u };
+          const user = { handle: u.handle || u.name, name: u.name || u.handle };
+          // `kind: agent` and `model` (SPEC.md §18.2) tell agents from people.
+          if (u.kind != null) user.kind = String(u.kind);
+          if (u.model != null) user.model = String(u.model);
+          return user;
+        })
         .filter((u) => u.handle);
     }
   } catch (err) {
     model.loadErrors.push({ file: 'config/users.yaml', message: err.message });
+  }
+
+  // AI usage pricing, budget defaults and policy (SPEC.md §18.2; optional).
+  try {
+    if (await fs.exists(AI_CONFIG_PATH)) {
+      const { data, error } = parseConfig(await fs.readFile(AI_CONFIG_PATH));
+      if (error) model.loadErrors.push({ file: AI_CONFIG_PATH, message: error });
+      model.ai = parseAiConfig(data);
+      for (const message of model.ai.errors) model.loadErrors.push({ file: AI_CONFIG_PATH, message });
+    }
+  } catch (err) {
+    model.loadErrors.push({ file: AI_CONFIG_PATH, message: err.message });
   }
 
   // Local user preferences (optional, git-ignored) — defaults + theme (SPEC.md §14).
@@ -248,5 +271,5 @@ function distinctValues(items, field) {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-Object.assign(WS, { SUPPORTED_MAJOR, loadRepository, buildColumns, distinctValues, sortItems, detailDisplay });
+Object.assign(WS, { SUPPORTED_MAJOR, PRIORITY_RANK, loadRepository, buildColumns, distinctValues, sortItems, detailDisplay });
 })(window.WS = window.WS || {});

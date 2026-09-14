@@ -57,6 +57,8 @@ core/parser.js    parseItem / validateItem / serializeItem / changeStatus; also 
                   unresolved Git conflict markers
 core/allocation.js  ID blocks: registry parsing, allocateId, claim/lowestFreeBlock,
                   cross-file validateRepository, and renumberPlan/rewriteReferences
+core/usage.js     AI usage (SPEC.md §18.2): agent.runs / budget_usd, config/ai.yaml pricing,
+                  itemUsage (cost, tokens, budget state) and chip formatting; pure
 core/model.js     loadRepository(fs) -> the whole in-memory model; buildColumns, sortItems
 core/filesystem.js  browser File System Access backend (all app I/O goes through it)
 core/recent.js    IndexedDB-backed list of previously opened repositories

@@ -13,6 +13,7 @@ settings:
     - type
     - priority
     - assignee
+    - cost
   # detail_display: side-panel-vertical (default) | side-panel-horizontal | floating
   detail_display: floating
 sort:

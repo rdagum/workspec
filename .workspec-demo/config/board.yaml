@@ -8,6 +8,7 @@ settings:
     - type
     - priority
     - assignee
+    - cost
   # detail_display: how the item detail opens.
   # side-panel-vertical (default) | side-panel-horizontal | floating
   detail_display: floating

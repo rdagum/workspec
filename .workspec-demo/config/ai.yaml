@@ -1,0 +1,11 @@
+# AI usage and budgets (SPEC.md 18.2). Rates are USD per million tokens and are
+# list-price equivalents. The two models below are FICTIONAL and their rates are
+# ILLUSTRATIVE for this demo repository only — a real repository fills this
+# table from the published price list on the day, and dates it here.
+pricing:
+  demo-large: { input: 10, output: 50, cache_read: 1, cache_write: 12.5 }
+  demo-small: { input: 1, output: 5, cache_read: 0.1, cache_write: 1.25 }
+defaults:
+  budget_usd: { STORY: 10, BUG: 5, TASK: 3, SPIKE: 5 }
+policy:
+  require_usage: false

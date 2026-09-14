@@ -314,8 +314,9 @@ reopens it. The list is per browser profile and per origin, so `file://` and
 ## Running the tests
 
 The pure modules (`utils/yaml.js`, `utils/ids.js`, `core/parser.js`,
-`core/allocation.js`, `core/model.js`, `state/store.js`) and the command-line
-tools are covered by Node's built-in test runner. There is nothing to install:
+`core/allocation.js`, `core/usage.js`, `core/model.js`, `state/store.js`) and
+the command-line tools are covered by Node's built-in test runner; every script
+`index.html` loads, UI modules included, is at least parse-checked. There is nothing to install:
 a stock Node LTS (22 or newer) is the only requirement.
 
 ```
@@ -348,7 +349,12 @@ defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
 - **Create** — make a new item from a template in `templates/`; the next
   zero-padded `TYPE-000000` id is generated automatically, from this clone's
   own ID block when the repository allocates in blocks (see below).
-- **Search & filter** — by id/title text, and by type, status, assignee, label.
+- **Search & filter** — by id/title text, and by type, status, priority
+  (most urgent first), assignee, label.
+- **AI usage on cards** — an item that carries `agent.runs` (see "Tracking AI
+  usage") shows a cost chip: the list-price cost when every run is priced by
+  `config/ai.yaml`, otherwise the total tokens; red once the item is over its
+  budget. Hover it for tokens by kind, models, handles and the budget line.
 - **Context** — read-only viewer for `context/*.md`.
 - **Validation** — required fields, ID format, filename-equals-ID, duplicate
   IDs across files and status-vs-workflow are checked; bad files surface
@@ -486,7 +492,12 @@ a run — by hand, or from a Claude Code session transcript including its
 subagents — with a line-level edit that leaves every other line of the file
 untouched, and `tools/usage-report.js` prints totals by status, assignee,
 model, type, label or epic, or one item's spent, budget and remaining. The
-board's cost chip, editor section and sidebar totals ship with STORY-001003.
+board already shows the cost chip on cards (leave `cost` out of
+`settings.card_fields` in `board.yaml` to hide it); the editor section and the
+sidebar totals ship with STORY-001003. `.workspec-demo/` carries an `ai.yaml`
+with fictional models and three items with runs — one over budget, one
+unpriced, one with a recorded cost — so the chip can be seen without waiting
+for a real run.
 
 ## Project layout
 

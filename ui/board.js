@@ -5,7 +5,7 @@
 (function (WS) {
 'use strict';
 
-const { el, clear, renderRecentList } = WS;
+const { el, clear, renderRecentList, itemUsage, formatUsd, formatTokens, usageSummaryLines } = WS;
 
 const TYPE_CLASS = {
   EPIC: 'type-epic',
@@ -173,12 +173,37 @@ class BoardView {
     if (Array.isArray(m.labels)) {
       for (const label of m.labels) metaRow.append(el('span', { class: 'pill label', text: String(label) }));
     }
+    // AI usage chip (SPEC.md §18.2, PROMPT.md §4.10): cost when every run is
+    // priced, else total tokens; red once the item is over its budget. Hover
+    // for tokens by kind, models, handles and the budget line.
+    const usage = this._showCost() ? itemUsage(record, this.store.model) : null;
+    if (usage && usage.runs > 0) {
+      metaRow.append(
+        el('span', {
+          class: 'pill cost' + (usage.overBudget ? ' over-budget' : ''),
+          text: usage.priced ? formatUsd(usage.cost) : `${formatTokens(usage.totalTokens)} tok`,
+          title: usageSummaryLines(usage).join('\n'),
+        })
+      );
+    }
     if (metaRow.childNodes.length) card.append(metaRow);
 
     if (hasErrors) {
       card.append(el('div', { class: 'card-error-badge', text: `⚠ ${record.errors.length} error(s)` }));
     }
     return card;
+  }
+
+  /**
+   * board.yaml `settings.card_fields` may leave out `cost` to hide the usage
+   * chip; with no list at all the chip shows whenever an item has runs. The
+   * other entries of that list are not honoured yet (docs/REVIEW-2026-09.md §4
+   * finding 12).
+   */
+  _showCost() {
+    const settings = (this.store.model && this.store.model.board && this.store.model.board.settings) || {};
+    const fields = settings.card_fields;
+    return !Array.isArray(fields) || fields.map(String).includes('cost');
   }
 
   _emptyState() {

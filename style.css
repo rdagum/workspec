@@ -217,6 +217,8 @@ button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid t
 .priority-medium { color: var(--warn); border-color: var(--warn); }
 .priority-low { color: var(--text-dim); }
 .pill.assignee { color: var(--accent); border-color: var(--accent-2); }
+.pill.cost { color: var(--ok); border-color: var(--ok); font-variant-numeric: tabular-nums; }
+.pill.cost.over-budget { color: var(--danger); border-color: var(--danger); }
 .card-error-badge { color: var(--danger); font-size: 11px; margin-top: 6px; }
 
 /* ---- Editor ------------------------------------------------------------- */
