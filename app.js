@@ -58,6 +58,7 @@ const refs = {
   openMenu: document.getElementById('open-menu'),
   refreshBtn: document.getElementById('refresh-btn'),
   themeBtn: document.getElementById('theme-btn'),
+  contrastBtn: document.getElementById('contrast-btn'),
 };
 
 let lastMessage = '';
@@ -525,8 +526,12 @@ async function renderContextOverlay() {
 // --- Preferences -----------------------------------------------------------
 
 // Theme resolution order: a manual toggle (persisted in localStorage) wins over
-// the repo's user.local.yaml value, which in turn falls back to dark.
+// the repo's user.local.yaml value, which in turn falls back to dark. A theme is
+// a base (dark | light) plus an optional "-aa" suffix for the accessible,
+// WCAG AA contrast variant of that base; the two topbar buttons flip one part
+// each and keep the other.
 const THEME_KEY = 'workspec.theme';
+const THEMES = ['dark', 'light', 'dark-aa', 'light-aa'];
 function storedTheme() {
   try {
     return localStorage.getItem(THEME_KEY);
@@ -535,21 +540,35 @@ function storedTheme() {
   }
 }
 function setTheme(theme) {
-  document.body.dataset.theme = theme === 'light' ? 'light' : 'dark';
-  refs.themeBtn.textContent = theme === 'light' ? '☾' : '☀';
-  refs.themeBtn.title = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+  const t = THEMES.includes(theme) ? theme : 'dark';
+  const light = t.startsWith('light');
+  const aa = t.endsWith('-aa');
+  document.body.dataset.theme = t;
+  refs.themeBtn.textContent = light ? '☾' : '☀';
+  refs.themeBtn.title = light ? 'Switch to dark theme' : 'Switch to light theme';
+  refs.contrastBtn.setAttribute('aria-pressed', String(aa));
+  refs.contrastBtn.title = aa ? 'Switch to standard contrast' : 'Switch to high contrast (WCAG AA)';
 }
 function applyTheme(configTheme) {
-  setTheme(storedTheme() || configTheme || 'dark');
+  const stored = storedTheme();
+  setTheme(THEMES.includes(stored) ? stored : configTheme || 'dark');
 }
-function toggleTheme() {
-  const next = document.body.dataset.theme === 'light' ? 'dark' : 'light';
-  setTheme(next);
+function saveTheme(theme) {
+  setTheme(theme);
   try {
-    localStorage.setItem(THEME_KEY, next);
+    localStorage.setItem(THEME_KEY, theme);
   } catch {
     /* ignore — the choice just won't persist across reloads */
   }
+}
+function toggleTheme() {
+  const cur = document.body.dataset.theme;
+  const base = cur.startsWith('light') ? 'dark' : 'light';
+  saveTheme(base + (cur.endsWith('-aa') ? '-aa' : ''));
+}
+function toggleContrast() {
+  const cur = document.body.dataset.theme;
+  saveTheme(cur.endsWith('-aa') ? cur.slice(0, -3) : cur + '-aa');
 }
 
 // "Reopen the last repository automatically" (F1). Stored next to the theme
@@ -670,6 +689,7 @@ document.addEventListener('click', (e) => {
 });
 refs.refreshBtn.addEventListener('click', refreshRepository);
 refs.themeBtn.addEventListener('click', toggleTheme);
+refs.contrastBtn.addEventListener('click', toggleContrast);
 // Clicking the floating-mode backdrop closes the open item (save-on-close guarded).
 refs.editorBackdrop.addEventListener('click', () => editor.handleEscape());
 
