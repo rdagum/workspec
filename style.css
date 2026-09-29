@@ -22,8 +22,25 @@
   --bug: #ff6b6b;
   --spike: #f4b740;
 
+  /* Colours painted on or around a fill. Named so the accessible themes below
+     can change them; in dark and light they keep their original values. */
+  --on-accent: #fff;
+  --on-danger: #2a0d0d;
+  --danger-hover: #ff8585;
+  --on-type: #0f1117;
+  --invalid-ground: #2a1414;
+  --banner-ground: #3a2410;
+
   --radius: 8px;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* Aliases of other palette colours. Declared on body, where data-theme lives,
+   so var() resolves against the active theme's palette; on :root it would be
+   resolved once against the dark one and inherited as that value. */
+body {
+  --accent-hover: var(--accent);
+  --type-other: var(--text-dim);
 }
 
 /* Light theme (config/user.local.yaml: theme: light). Only the palette changes;
@@ -49,6 +66,48 @@ body[data-theme="light"] {
   --task: #2e9e6b;
   --bug: #d64545;
   --spike: #c98a1a;
+
+  --shadow: 0 8px 30px rgba(20, 30, 60, 0.18);
+}
+
+/* Accessible themes (theme: dark-aa | light-aa). The same palettes with their
+   contrast gaps closed: every text colour is at least 4.5:1 on bg, bg-2, bg-3
+   and panel, every label at least 4.5:1 on its fill, and control borders and
+   the focus ring at least 3:1 (WCAG 2.2 AA). Hues are kept; only lightness
+   moves. test/theme.test.js checks these pairs. */
+body[data-theme="dark-aa"] {
+  --border-2: #616d92;
+  --text-faint: #848c9c;
+  --accent-hover: #2b6aff;
+}
+
+body[data-theme="light-aa"] {
+  --bg: #f4f6fa;
+  --bg-2: #ffffff;
+  --bg-3: #eceff5;
+  --panel: #ffffff;
+  --border: #dde1ea;
+  --border-2: #7c8aa8;
+  --text: #1a1e29;
+  --text-dim: #4f586b;
+  --text-faint: #636c81;
+  --accent: #3063de;
+  --accent-2: #3a64cc;
+  --danger: #cd2d2d;
+  --warn: #956215;
+  --ok: #247a53;
+
+  --epic: #8d61f0;
+  --story: #4a77e2;
+  --task: #2e9e6b;
+  --bug: #d84d4d;
+  --spike: #c98a1a;
+
+  --on-danger: #fff;
+  --danger-hover: #c52b2b;
+  --type-other: #8b93a6;
+  --invalid-ground: #f5dada;
+  --banner-ground: #fdf1dc;
 
   --shadow: 0 8px 30px rgba(20, 30, 60, 0.18);
 }
@@ -79,21 +138,22 @@ body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 /* ---- Buttons ------------------------------------------------------------ */
 button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid transparent; }
 .btn-primary {
-  background: var(--accent-2); color: #fff; border-color: var(--accent-2);
+  background: var(--accent-2); color: var(--on-accent); border-color: var(--accent-2);
   padding: 8px 14px; font-weight: 600;
 }
-.btn-primary:hover { background: var(--accent); }
+.btn-primary:hover { background: var(--accent-hover); }
 .btn-secondary {
   background: var(--bg-3); color: var(--text-dim); border: 1px solid var(--border-2);
   padding: 8px 14px; font-weight: 600;
 }
 .btn-secondary:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
 .btn-secondary:disabled { opacity: 0.4; cursor: default; }
+.btn-secondary[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .btn-danger {
-  background: var(--danger); color: #2a0d0d; border-color: var(--danger);
+  background: var(--danger); color: var(--on-danger); border-color: var(--danger);
   padding: 8px 14px; font-weight: 600;
 }
-.btn-danger:hover { background: #ff8585; }
+.btn-danger:hover { background: var(--danger-hover); }
 .btn-link { background: none; color: var(--text-dim); border: none; padding: 6px 0; text-align: left; }
 .btn-link:hover { color: var(--text); text-decoration: underline; }
 .btn-toggle, .btn-mini {
@@ -191,7 +251,7 @@ button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid t
 .card-delete:focus-visible { opacity: 1; outline: 2px solid var(--danger); outline-offset: 1px; }
 .card-type {
   font-size: 10px; font-weight: 700; letter-spacing: 0.05em; padding: 1px 6px;
-  border-radius: 4px; color: #0f1117; background: var(--text-dim);
+  border-radius: 4px; color: var(--on-type); background: var(--type-other);
 }
 .type-epic { background: var(--epic); }
 .type-story { background: var(--story); }
@@ -238,10 +298,10 @@ button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid t
 .save-indicator.dirty { color: var(--warn); }
 .editor-actions { display: flex; gap: 8px; align-items: center; }
 .btn-save {
-  background: var(--accent-2); color: #fff; border: 1px solid var(--accent-2);
+  background: var(--accent-2); color: var(--on-accent); border: 1px solid var(--accent-2);
   padding: 4px 14px; font-size: 12px; font-weight: 600;
 }
-.btn-save:hover:not(:disabled) { background: var(--accent); }
+.btn-save:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-save:disabled { opacity: 0.45; cursor: default; }
 
 .validation { padding: 0 14px; }
@@ -275,7 +335,7 @@ textarea.field-input { resize: vertical; font-family: ui-monospace, monospace; l
   font-family: ui-monospace, "Cascadia Code", monospace; font-size: 13px;
   padding: 12px; resize: none; line-height: 1.5;
 }
-.raw-yaml.invalid { background: #2a1414; }
+.raw-yaml.invalid { background: var(--invalid-ground); }
 .md-preview { padding: 12px 16px; }
 
 /* ---- Detail display modes ----------------------------------------------- */
@@ -407,7 +467,7 @@ body[data-detail-display="floating"] .meta-form .field:has(textarea) { grid-colu
 /* ---- Unsupported banner ------------------------------------------------- */
 .unsupported-banner { display: none; }
 body.unsupported .unsupported-banner {
-  display: block; background: #3a2410; color: var(--warn);
+  display: block; background: var(--banner-ground); color: var(--warn);
   padding: 10px 16px; border-bottom: 1px solid var(--warn); text-align: center;
 }
 body.unsupported .board-mount, body.unsupported #sidebar-mount { opacity: 0.4; pointer-events: none; }

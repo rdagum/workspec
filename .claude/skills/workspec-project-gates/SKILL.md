@@ -90,6 +90,10 @@ scripts. That leaves entirely untested:
 - `ui/board.js`, `ui/dom.js`, `ui/editor.js`, `ui/recent.js`, `ui/sidebar.js`
 - `core/filesystem.js`
 
+`test/theme.test.js` reads the palettes in `style.css` and fails when an
+accessible theme (`dark-aa`, `light-aa`) drops below WCAG AA contrast; the rest
+of the stylesheet is unchecked.
+
 `test/syntax.test.js` compiles every script `index.html` lists, so a change to
 one of those files that does not *parse* now fails `node --test`; a change that
 parses but misbehaves still **passes every gate above while being completely

@@ -359,6 +359,12 @@ defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
 - **Validation** — required fields, ID format, filename-equals-ID, duplicate
   IDs across files and status-vs-workflow are checked; bad files surface
   errors but never stop the rest of the board from loading.
+- **Themes** — dark (default) or light, each with a high-contrast variant that
+  meets WCAG 2.2 AA: every text colour at least 4.5:1 on its surface, control
+  borders and the focus ring at least 3:1. **☀ / ☾** in the top bar switches
+  dark and light; **◐** turns high contrast on and off. The choice is kept in
+  the browser; without one the board uses `theme:` from
+  `config/user.local.yaml` — `dark`, `light`, `dark-aa` or `light-aa`.
 
 ## Avoiding ID collisions between working copies
 
@@ -532,7 +538,8 @@ test/             node --test suite (not loaded by the browser)
   load.js         evaluates the scripts above in Node against a stub window
   helpers.js      fixture discovery + the "content-equal" comparison
   *.test.js       yaml, ids, parser, allocation, model, store and tools tests;
-                  roundtrip runs the fixture corpus
+                  roundtrip runs the fixture corpus; theme checks the
+                  style.css palettes' contrast
   fixtures/items/ complete work-item files that must round-trip unchanged
 
 tools/            node CLIs (zero dependencies; reuse test/load.js)
