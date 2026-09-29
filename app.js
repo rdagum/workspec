@@ -339,7 +339,19 @@ function openCreateDialog() {
     el('div', { class: 'claim-actions' }, [claimBtn]),
   ]);
 
+  // Tell the user where the item will land while an epic is focused.
+  const parentNote = el('div', { class: 'field-note create-parent-note' });
+
   const refresh = () => {
+    const tpl = currentTemplate();
+    const focusParent = store.newItemParent(tpl.type);
+    const tplParent = tpl.meta && tpl.meta.parent != null && tpl.meta.parent !== '' ? String(tpl.meta.parent) : '';
+    parentNote.textContent = focusParent
+      ? tplParent
+        ? `Parent: ${tplParent} (from the template; the focused epic is ${focusParent})`
+        : `Parent: ${focusParent} (the focused epic)`
+      : '';
+    parentNote.hidden = !focusParent;
     const state = allocationState(model);
     claimBox.hidden = !state.problem;
     previewBlock.textContent = '';
@@ -397,7 +409,7 @@ function openCreateDialog() {
 
   const form = el('div', { class: 'modal' }, [
     el('h2', { text: 'New work item' }),
-    el('div', { class: 'field' }, [el('label', { class: 'field-label', text: 'Type / template' }), typeSelect]),
+    el('div', { class: 'field' }, [el('label', { class: 'field-label', text: 'Type / template' }), typeSelect, parentNote]),
     el('div', { class: 'field' }, [el('label', { class: 'field-label', text: 'Title' }), titleInput]),
     el('div', { class: 'field' }, [
       el('label', { class: 'field-label', text: 'Generated ID' }),
@@ -431,6 +443,9 @@ async function createItem(template, title) {
   // Start from template metadata (if any), then enforce identity/required fields
   // in canonical order (SPEC.md §8).
   const base = template.meta ? JSON.parse(JSON.stringify(template.meta)) : {};
+  // With an epic focused, new work lands in it; a template's own parent wins.
+  const focusParent = store.newItemParent(template.type);
+  if (focusParent && (base.parent == null || base.parent === '')) base.parent = focusParent;
   const meta = {};
   for (const key of CANONICAL_ORDER) {
     if (key in base) meta[key] = base[key];

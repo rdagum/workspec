@@ -202,6 +202,18 @@ button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid t
 .context-link:hover { background: var(--bg-3); color: var(--text); }
 .context-link.active { background: var(--bg-3); color: var(--accent); }
 
+/* Epics focus list (docs/DESIGN-2026-09-epic-focus.md §2) */
+.epic-link { display: flex; align-items: baseline; gap: 6px; }
+.epic-link::before { content: none; }
+.epic-id { flex: 0 0 auto; font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-faint); }
+.epic-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.epic-count { flex: 0 0 auto; font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.epic-link.active .epic-id, .epic-link.active .epic-count { color: var(--accent); }
+.epic-show-done {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  font-size: 12px; color: var(--text-faint); cursor: pointer;
+}
+
 .problems { border-top: 1px solid var(--border); padding-top: 12px; }
 .problem-error, .problem-warn { font-size: 12px; margin-bottom: 5px; word-break: break-word; }
 .problem-error { color: var(--danger); }
@@ -267,6 +279,7 @@ button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid t
 }
 .card-parent:hover:not(:disabled) { color: var(--accent); background: var(--bg); }
 .card-parent.missing { color: var(--danger); cursor: default; opacity: 0.8; }
+.card-blocked-outside { margin: -4px 0 8px; font-size: 11px; color: var(--warn); cursor: help; }
 .card-meta { display: flex; flex-wrap: wrap; gap: 5px; }
 .pill {
   font-size: 11px; padding: 1px 7px; border-radius: 10px;

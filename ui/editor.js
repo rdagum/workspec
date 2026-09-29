@@ -19,7 +19,7 @@
 const { el, clear, renderMarkdown } = WS;
 const { stringifyYaml, parseYaml } = WS;
 const { validateItem, REQUIRED_FIELDS } = WS;
-const { detailDisplay } = WS;
+const { detailDisplay, isEpic } = WS;
 
 const KNOWN_TYPES = ['EPIC', 'STORY', 'TASK', 'BUG', 'SPIKE'];
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
@@ -162,6 +162,16 @@ class EditorView {
           },
           text: this.rawMode ? 'Form view' : 'Raw YAML',
         }),
+        // An EPIC can focus the board on itself (docs/DESIGN-2026-09-epic-focus.md
+        // §1.8). Keyed on the saved record: the focus needs it to be an EPIC on disk.
+        isEpic(record)
+          ? el('button', {
+              class: 'btn-toggle',
+              title: 'Show only this epic and its items on the board',
+              onclick: () => this._focusEpic(record),
+              text: 'Focus on board',
+            })
+          : null,
         saveBtn,
         el('button', { class: 'btn-close', title: 'Close (Esc)', onclick: () => this._closeGuard(), text: '✕' }),
       ]),
@@ -386,6 +396,12 @@ class EditorView {
     // Safety net: persist pending edits on close so nothing is lost.
     if (this._dirty && !this._rawError) await this.save();
     this.store.close();
+  }
+
+  /** Focus the board on this epic; the floating modal covers the board, so close it first. */
+  async _focusEpic(record) {
+    if (detailDisplay(this.store.model) === 'floating') await this._closeGuard();
+    this.store.setFilter('epic', String(record.meta.id));
   }
 
   /** Called by the app on Escape. */

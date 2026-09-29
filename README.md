@@ -351,6 +351,17 @@ defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
   own ID block when the repository allocates in blocks (see below).
 - **Search & filter** — by id/title text, and by type, status, priority
   (most urgent first), assignee, label.
+- **Epic focus** — the sidebar's **Epics** list shows every item with
+  `type: EPIC` and its progress (items done / items in the epic). Click one to
+  see only that epic and everything that reaches it through `parent` —
+  grandchildren included, so a task under a story under the epic shows too.
+  The other filters still apply on top; click the epic again or **Clear
+  filters** to see everything. **No epic** shows the work that belongs to no
+  epic. Epics in the last column are hidden until you tick **Show done**.
+  While an epic is focused, **+ New work item** sets the new item's `parent`
+  to it (unless you are creating an epic), and a card held up by open work
+  outside the epic (its `depends_on`, or another item's `blocks`) shows
+  **⛓ blocked outside epic**. An open epic's editor has **Focus on board**.
 - **AI usage on cards** — an item that carries `agent.runs` (see "Tracking AI
   usage") shows a cost chip: the list-price cost when every run is priced by
   `config/ai.yaml`, otherwise the total tokens; red once the item is over its
@@ -519,7 +530,7 @@ core/
   filesystem.js   File System Access API abstraction (all I/O goes through here)
   parser.js       work-item parse / validate / serialize / surgical status patch
   allocation.js   per-clone ID blocks, registry, cross-file validation, renumber plans
-  model.js        repository loader + board model
+  model.js        repository loader + board model, epic membership through parent
 
 state/
   store.js        observable state (filters, selection, dirty flags, mutations)
@@ -527,7 +538,7 @@ state/
 ui/
   board.js        Kanban board + drag/drop
   editor.js       split metadata/markdown editor (explicit save, focus-stable)
-  sidebar.js      search, filters, context list, new-item entry
+  sidebar.js      search, epics focus list, filters, context list, new-item entry
   dom.js          DOM helpers + safe Markdown renderer
 
 utils/

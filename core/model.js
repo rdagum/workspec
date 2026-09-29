@@ -271,5 +271,110 @@ function distinctValues(items, field) {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-Object.assign(WS, { SUPPORTED_MAJOR, PRIORITY_RANK, loadRepository, buildColumns, distinctValues, sortItems, detailDisplay });
+// --- Epic membership (docs/DESIGN-2026-09-epic-focus.md §1.3) ---------------
+//
+// An item belongs to an epic when the epic appears anywhere on its `parent`
+// chain — the same relation SPEC.md §18.2 uses for the AI-usage roll-up. Only
+// the exact type literal EPIC (SPEC.md §7.1) counts as an epic. Bad data never
+// throws: a missing parent ends the chain and a cycle ends it at the first
+// repeated ID; the validator, not this walk, is where such problems surface.
+
+const EPIC_TYPE = 'EPIC';
+
+function isEpic(record) {
+  return !!(record && record.meta && String(record.meta.type) === EPIC_TYPE);
+}
+
+/** ID → record over the loaded items; the first file wins a duplicate ID (validateRepository reports it). */
+function indexById(items) {
+  const byId = new Map();
+  for (const record of items) {
+    const id = record.meta && record.meta.id;
+    if (id != null && id !== '' && !byId.has(String(id))) byId.set(String(id), record);
+  }
+  return byId;
+}
+
+/**
+ * IDs on a record's parent chain, nearest first. Only parents that resolve to
+ * a loaded item are included; the walk stops at a missing parent or at the
+ * first ID it has already seen (including the record's own ID).
+ */
+function parentChain(record, byId) {
+  const chain = [];
+  const seen = new Set();
+  if (record && record.meta && record.meta.id != null) seen.add(String(record.meta.id));
+  let current = record;
+  while (current && current.meta && current.meta.parent != null && current.meta.parent !== '') {
+    const id = String(current.meta.parent);
+    if (seen.has(id)) break;
+    const parent = byId.get(id);
+    if (!parent) break;
+    seen.add(id);
+    chain.push(id);
+    current = parent;
+  }
+  return chain;
+}
+
+/**
+ * Epic membership for the whole repository in one pass:
+ *   epics    — the EPIC records
+ *   members  — epic ID → records that reach it through `parent` (epic itself excluded)
+ *   epicsOf  — item path → IDs of the epics it belongs to, nearest first
+ *   noEpic   — non-EPIC records that reach no epic
+ * Cost is one parent walk per item; callers that render often should cache
+ * the result between model changes (see Store.epicIndex).
+ */
+function epicIndex(model) {
+  const items = model ? [...model.items.values()] : [];
+  const byId = indexById(items);
+  const epics = items.filter(isEpic);
+  const members = new Map(epics.map((e) => [String(e.meta.id), []]));
+  const epicsOf = new Map();
+  const noEpic = [];
+  // blockedBy: ID → IDs of the items that name it in their own `blocks` list,
+  // the other half of a dependency written from the blocker's side.
+  const blockedBy = new Map();
+  for (const record of items) {
+    const ids = parentChain(record, byId).filter((id) => isEpic(byId.get(id)));
+    epicsOf.set(record.path, ids);
+    for (const id of ids) if (members.has(id)) members.get(id).push(record);
+    if (!ids.length && !isEpic(record)) noEpic.push(record);
+    const from = record.meta && record.meta.id;
+    for (const target of idList(record.meta && record.meta.blocks)) {
+      if (from == null || from === '') continue;
+      if (!blockedBy.has(target)) blockedBy.set(target, []);
+      blockedBy.get(target).push(String(from));
+    }
+  }
+  return { byId, epics, members, epicsOf, noEpic, blockedBy };
+}
+
+/** A reference field (`depends_on`, `blocks`, …) as a list of ID strings; a scalar counts as one. */
+function idList(value) {
+  const list = Array.isArray(value) ? value : value != null && value !== '' ? [value] : [];
+  return list.filter((v) => v != null && v !== '').map(String);
+}
+
+/** Name of the workflow column that means finished: the last one. */
+function doneColumn(model) {
+  const workflow = (model && model.workflow) || [];
+  return workflow.length ? workflow[workflow.length - 1] : null;
+}
+
+/** { done, total } over an epic's members; done = status in the last workflow column. */
+function epicProgress(index, epicId, model) {
+  const members = index.members.get(String(epicId)) || [];
+  const done = doneColumn(model);
+  return {
+    done: members.filter((r) => r.meta && r.meta.status === done).length,
+    total: members.length,
+  };
+}
+
+Object.assign(WS, {
+  SUPPORTED_MAJOR, PRIORITY_RANK, loadRepository, buildColumns, distinctValues, sortItems, detailDisplay,
+  EPIC_TYPE, isEpic, indexById, parentChain, epicIndex, idList, doneColumn, epicProgress,
+});
 })(window.WS = window.WS || {});

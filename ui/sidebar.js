@@ -5,7 +5,7 @@
 (function (WS) {
 'use strict';
 
-const { el, clear } = WS;
+const { el, clear, NO_EPIC } = WS;
 
 class SidebarView {
   constructor(store, { onNewItem, onOpenContext } = {}) {
@@ -46,6 +46,10 @@ class SidebarView {
     this.root.append(
       el('div', { class: 'sidebar-section' }, [el('label', { class: 'sb-label', text: 'Search' }), search])
     );
+
+    // Epics (docs/DESIGN-2026-09-epic-focus.md): focus the board on one epic
+    const epics = this._epicSection();
+    if (epics) this.root.append(epics);
 
     // Filters
     const filters = el('div', { class: 'sidebar-section' }, [
@@ -106,6 +110,58 @@ class SidebarView {
     }
 
     return this.root;
+  }
+
+  /**
+   * The repository's EPIC items as a focus list with done/total progress, a
+   * "No epic" entry, and a toggle for epics in the last workflow column. The
+   * numbers come from store.epicList(); this only formats them. Omitted when
+   * the repository has no EPIC items.
+   */
+  _epicSection() {
+    const store = this.store;
+    const { entries, hiddenDone, noEpicCount, hasEpics } = store.epicList();
+    if (!hasEpics) return null;
+    const focused = store.state.filters.epic;
+
+    const entry = (value, label, title, count, tooltip) =>
+      el('li', {}, [
+        el('button', {
+          class: 'context-link epic-link' + (focused === value ? ' active' : ''),
+          title: tooltip,
+          'aria-pressed': focused === value ? 'true' : 'false',
+          onclick: () => store.toggleEpicFocus(value),
+        }, [
+          label ? el('span', { class: 'epic-id', text: label }) : null,
+          el('span', { class: 'epic-title', text: title }),
+          el('span', { class: 'epic-count', text: count }),
+        ]),
+      ]);
+
+    const list = el('ul', { class: 'context-list epic-list' });
+    for (const e of entries) {
+      list.append(
+        entry(e.id, e.id, e.title || '(untitled)', `${e.done}/${e.total}`,
+          `${e.id} — ${e.title}\n${e.done} of ${e.total} item(s) done. Click to ${focused === e.id ? 'show all items' : 'focus the board on this epic'}.`)
+      );
+    }
+    list.append(
+      entry(NO_EPIC, '', 'No epic', String(noEpicCount),
+        'Items that belong to no epic. Click to ' + (focused === NO_EPIC ? 'show all items.' : 'show only these.'))
+    );
+
+    const toggle = el('input', { type: 'checkbox', checked: store.state.showDoneEpics });
+    toggle.addEventListener('change', () => store.setShowDoneEpics(toggle.checked));
+    const showDone = el('label', { class: 'epic-show-done' }, [
+      toggle,
+      el('span', { text: hiddenDone && !store.state.showDoneEpics ? `Show done (${hiddenDone})` : 'Show done' }),
+    ]);
+
+    return el('div', { class: 'sidebar-section' }, [
+      el('label', { class: 'sb-label', text: 'Epics' }),
+      list,
+      showDone,
+    ]);
   }
 
   _sortSection() {

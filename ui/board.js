@@ -163,6 +163,19 @@ class BoardView {
       card.append(crumb);
     }
 
+    // With an epic focused, flag dependencies that hold this card up from
+    // outside the focused board (docs/DESIGN-2026-09-epic-focus.md §1.8).
+    const outside = this.store.outsideBlockers(record);
+    if (outside.length) {
+      card.append(
+        el('div', {
+          class: 'card-blocked-outside',
+          title: `Held up by work outside this epic that is not done (depends_on, or their blocks):\n${outside.join('\n')}`,
+          text: `⛓ blocked outside epic (${outside.length})`,
+        })
+      );
+    }
+
     const metaRow = el('div', { class: 'card-meta' });
     if (m.priority) {
       metaRow.append(
