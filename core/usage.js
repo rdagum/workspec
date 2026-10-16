@@ -6,13 +6,18 @@
 // no DOM, no I/O — so the board, the CLI tools and the tests share one
 // implementation. Nothing derived here is ever written back to a file.
 //
-// Landed with the card chip (STORY-001003); STORY-001001 adds validateUsage,
-// appendRunText and the epic/repository roll-ups on top of these primitives.
+// Layers, top to bottom: configuration (parseAiConfig), per-run and per-item
+// derivation (runCost, itemUsage), aggregation (summarize, rollup), the
+// line-level append every writer of runs uses (appendRunText) and the
+// repository checks with their README codes (usageIssues, validateUsage).
 
 (function (WS) {
 'use strict';
 
+const { stringifyYaml } = WS;
+
 const AI_CONFIG_PATH = 'config/ai.yaml';
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Token kinds and the run field that carries each. The field names mirror the
@@ -232,6 +237,129 @@ function itemUsage(record, model) {
   };
 }
 
+// --- Aggregation ---------------------------------------------------------------
+
+/** An empty bucket of totals; `cost` is a running sum until finishTotals. */
+function emptyTotals() {
+  const tokens = {};
+  for (const [kind] of TOKEN_KINDS) tokens[kind] = 0;
+  return { items: 0, runs: 0, tokens, totalTokens: 0, cost: 0, knownCost: 0, priced: true, unpricedRuns: 0 };
+}
+
+function addRun(totals, run, cost) {
+  totals.runs++;
+  const t = runTokens(run);
+  for (const kind of Object.keys(t)) {
+    totals.tokens[kind] += t[kind];
+    totals.totalTokens += t[kind];
+  }
+  if (cost == null) {
+    totals.priced = false;
+    totals.unpricedRuns++;
+  } else {
+    totals.knownCost += cost;
+  }
+}
+
+/** `cost` becomes null when any run was unpriced, like itemUsage; `knownCost` keeps the priced part. */
+function finishTotals(totals) {
+  totals.cost = totals.priced ? totals.knownCost : null;
+  return totals;
+}
+
+function bucket(map, key) {
+  const k = key == null || key === '' ? '' : String(key);
+  if (!map[k]) map[k] = emptyTotals();
+  return map[k];
+}
+
+/**
+ * Totals over `records` (default: every item in the model):
+ *   { items, runs, tokens: {kind: n}, totalTokens, cost, knownCost, priced,
+ *     unpricedRuns, byStatus: {status: totals}, byHandle: {handle: totals},
+ *     byModel: {model: totals} }
+ * `items` counts records that carry `agent.runs`. `cost` is null when any run
+ * is unpriced (`knownCost` is the priced part, for "at least" displays).
+ * `since` / `until` (YYYY-MM-DD, inclusive) restrict the runs by their date;
+ * with either set, a run without a valid date is left out.
+ */
+function summarize(model, records, { since = null, until = null } = {}) {
+  const ai = model && model.ai;
+  const list = records ? [...records] : model && model.items ? [...model.items.values()] : [];
+  const totals = emptyTotals();
+  const byStatus = {};
+  const byHandle = {};
+  const byModel = {};
+  for (const record of list) {
+    const runs = runsOf(record && record.meta);
+    if (!runs) continue;
+    totals.items++;
+    const status = bucket(byStatus, record.meta.status);
+    status.items++;
+    for (const run of runs) {
+      if (since != null || until != null) {
+        const date = run.date == null ? '' : String(run.date);
+        if (!DATE_RE.test(date)) continue;
+        if (since != null && date < since) continue;
+        if (until != null && date > until) continue;
+      }
+      const cost = runCost(run, ai);
+      addRun(totals, run, cost);
+      addRun(status, run, cost);
+      addRun(bucket(byHandle, run.handle), run, cost);
+      addRun(bucket(byModel, run.model), run, cost);
+    }
+  }
+  for (const map of [byStatus, byHandle, byModel]) for (const t of Object.values(map)) finishTotals(t);
+  return Object.assign(finishTotals(totals), { byStatus, byHandle, byModel });
+}
+
+/**
+ * Roll-up of item `id` (typically an epic): its own runs plus those of every
+ * item that reaches it through `parent`, compared with its own resolved
+ * budget. Returns null for an unknown ID; otherwise the summarize() shape plus
+ * { id, members, budget, remaining, overBudget }, where `members` counts the
+ * records in the subtree (the item included). A parent cycle cannot loop: each
+ * record is visited once.
+ */
+function rollup(model, id) {
+  const all = model && model.items ? [...model.items.values()] : [];
+  const key = String(id);
+  const root = all.find((r) => r.meta && r.meta.id != null && String(r.meta.id) === key);
+  if (!root) return null;
+
+  const children = new Map();
+  for (const record of all) {
+    const parent = record.meta && record.meta.parent;
+    if (parent == null || parent === '') continue;
+    const p = String(parent);
+    if (!children.has(p)) children.set(p, []);
+    children.get(p).push(record);
+  }
+
+  const visited = new Set([root]);
+  const queue = [root];
+  for (let i = 0; i < queue.length; i++) {
+    const ownId = queue[i].meta && queue[i].meta.id;
+    for (const child of children.get(String(ownId)) || []) {
+      if (visited.has(child)) continue;
+      visited.add(child);
+      queue.push(child);
+    }
+  }
+
+  const totals = summarize(model, queue);
+  const budget = resolveBudget(root.meta, model.ai);
+  const remaining = budget != null && totals.cost != null ? budget - totals.cost : null;
+  return Object.assign(totals, {
+    id: key,
+    members: queue.length,
+    budget,
+    remaining,
+    overBudget: budget != null && totals.cost != null && totals.cost > budget,
+  });
+}
+
 // --- Formatting --------------------------------------------------------------
 
 /** '$1.12'; amounts under a cent show as '<$0.01' rather than '$0.00'. */
@@ -270,6 +398,285 @@ function usageSummaryLines(usage) {
   return lines;
 }
 
+// --- Appending a run -----------------------------------------------------------
+
+/** Index of the closing front-matter fence in `lines` (which keep their `\r`), or -1. */
+function closingFence(lines) {
+  if (!lines.length || !/^﻿?---[ \t]*\r?$/.test(lines[0])) return -1;
+  for (let i = 1; i < lines.length; i++) if (/^---[ \t]*\r?$/.test(lines[i])) return i;
+  return -1;
+}
+
+function indentOf(line) {
+  return line.length - line.trimStart().length;
+}
+
+function isBlankOrComment(line) {
+  const t = line.trim();
+  return t === '' || t.startsWith('#');
+}
+
+// Values that let a key take block content under it. A trailing
+// `# comment` after a value is not one of them: utils/yaml.js reads it as part
+// of the scalar, so `agent: # note` already holds a (string) value.
+const EMPTY_VALUES = ['', '~', 'null'];
+
+/**
+ * Append `run` to the item text as a line-level edit (SPEC.md §18.2, §15):
+ * every existing line stays byte-identical and the new lines use the file's
+ * line ending. The run goes after the last existing run; under an `agent`
+ * mapping without `runs`, a `runs:` key is added at the end of the mapping;
+ * without `agent`, `agent:` and `runs:` are added just before the closing
+ * fence. An empty placeholder value (`agent: {}`, `runs: []`, `~`, `null`) is
+ * the one existing line that changes, to the bare `key:` that can hold the
+ * block. Returns null when the front matter cannot be located, or when
+ * `agent` / `runs` hold a value a line-level edit cannot extend (a scalar, or
+ * a non-empty flow collection).
+ */
+function appendRunText(fileText, run) {
+  if (fileText == null || !isMapping(run)) return null;
+  const lines = String(fileText).split('\n');
+  const end = closingFence(lines);
+  if (end === -1) return null;
+  const cr = lines[0].endsWith('\r') ? '\r' : '';
+  const bare = (l) => (l.endsWith('\r') ? l.slice(0, -1) : l);
+  const block = (indent) =>
+    stringifyYaml([run])
+      .split('\n')
+      .map((l) => (l === '' ? cr : ' '.repeat(indent) + l + cr));
+  // Make line i a bare `key:` that can take block content: true when it
+  // already is or was an empty placeholder (then rewritten), false when it
+  // holds a real value.
+  const opened = (i, emptyFlow) => {
+    const m = bare(lines[i]).match(/^(\s*[A-Za-z_][\w-]*\s*:)(.*)$/);
+    const value = m[2].trim();
+    if (value === '') return true;
+    if (!EMPTY_VALUES.includes(value) && value !== emptyFlow) return false;
+    lines[i] = m[1] + cr;
+    return true;
+  };
+
+  const agentIdx = lines.findIndex((l, i) => i > 0 && i < end && /^agent\s*:/.test(l));
+  if (agentIdx === -1) {
+    lines.splice(end, 0, 'agent:' + cr, '  runs:' + cr, ...block(4));
+    return lines.join('\n');
+  }
+  if (!opened(agentIdx, '{}')) return null;
+
+  // Extent of the agent mapping: indented lines up to the next top-level key.
+  // Blank lines and comments are skipped so the insertion lands after the
+  // last line that belongs to the mapping, not after trailing spacing.
+  let lastContent = agentIdx;
+  let childIndent = null;
+  for (let j = agentIdx + 1; j < end; j++) {
+    const l = bare(lines[j]);
+    if (isBlankOrComment(l)) continue;
+    if (!/^\s/.test(l)) break;
+    if (childIndent === null) childIndent = indentOf(l);
+    lastContent = j;
+  }
+  if (childIndent === null) childIndent = 2;
+  const pad = ' '.repeat(childIndent);
+
+  let runsIdx = -1;
+  for (let j = agentIdx + 1; j <= lastContent; j++) {
+    const l = bare(lines[j]);
+    if (indentOf(l) === childIndent && /^\s*runs\s*:/.test(l)) {
+      runsIdx = j;
+      break;
+    }
+  }
+  if (runsIdx === -1) {
+    lines.splice(lastContent + 1, 0, `${pad}runs:` + cr, ...block(childIndent + 2));
+    return lines.join('\n');
+  }
+  if (!opened(runsIdx, '[]')) return null;
+
+  // Extent of the runs sequence: the lines indented deeper than `runs:`. The
+  // first dash fixes the item indent. Dashes at the key's own indent (YAML's
+  // compact form) are not read as a sequence by utils/yaml.js, so such a
+  // file is refused rather than extended; the validator reports its runs.
+  let lastRun = runsIdx;
+  let dashIndent = null;
+  for (let j = runsIdx + 1; j <= lastContent; j++) {
+    const l = bare(lines[j]);
+    if (isBlankOrComment(l)) continue;
+    const ind = indentOf(l);
+    const isDash = /^-(\s|$)/.test(l.slice(ind));
+    if (ind === childIndent && isDash) return null;
+    if (ind <= childIndent) break;
+    if (dashIndent === null && isDash) dashIndent = ind;
+    lastRun = j;
+  }
+  if (dashIndent === null) dashIndent = childIndent + 2;
+  lines.splice(lastRun + 1, 0, ...block(dashIndent));
+  return lines.join('\n');
+}
+
+// --- Validation ------------------------------------------------------------------
+
+const RUN_NUMBER_FIELDS = [...TOKEN_KINDS.map(([, field]) => field), 'cost_usd'];
+
+/** A YAML value that is present for validation purposes. */
+function present(v) {
+  return v != null && v !== '';
+}
+
+/**
+ * The AI-usage problems of one item, as [{ level, code, message }] with the
+ * codes of README "Tracking AI usage":
+ *   errors    invalid-usage
+ *   warnings  unpriced-model, over-budget, unknown-handle, missing-usage,
+ *             duplicate-run, early-run
+ * `model` supplies ai (pricing, defaults, policy), users and workflow. Every
+ * key under `agent` other than budget_usd and runs is ignored. `agent:` left
+ * empty is treated as absent; `runs:` left empty is not a list and is an error
+ * (write `runs: []` to say "no runs").
+ */
+function usageIssues(record, model) {
+  const issues = [];
+  const meta = record && record.meta;
+  const ai = (model && model.ai) || parseAiConfig(null);
+  if (!isMapping(meta)) return issues;
+  if (!('agent' in meta) && !ai.policy.requireUsage) return issues;
+  const error = (message) => issues.push({ level: 'error', code: 'invalid-usage', message });
+  const warn = (code, message) => issues.push({ level: 'warning', code, message });
+  const agent = meta.agent;
+
+  if (agent != null && !isMapping(agent)) {
+    error('agent must be a mapping (SPEC.md §18.2).');
+    return issues;
+  }
+
+  // Policy: an agent-assigned item that has reached the configured column must say what it cost.
+  if (ai.policy.requireUsage && !(isMapping(agent) && 'runs' in agent)) {
+    const workflow = (model && model.workflow) || [];
+    const assignee = meta.assignee == null ? '' : String(meta.assignee);
+    const user = ((model && model.users) || []).find((u) => u.handle === assignee);
+    const statusIdx = workflow.indexOf(meta.status);
+    const fromIdx = requireUsageIndex(model);
+    if (user && user.kind === 'agent' && statusIdx !== -1 && fromIdx !== -1 && statusIdx >= fromIdx) {
+      warn(
+        'missing-usage',
+        `${assignee} is an agent and the item is ${meta.status}, but it has no agent.runs; record the runs, or write runs: [] if it was finished by hand.`
+      );
+    }
+  }
+  if (!isMapping(agent)) return issues;
+
+  if (present(agent.budget_usd)) {
+    const b = toNumber(agent.budget_usd);
+    if (b == null || b < 0) error(`agent.budget_usd must be a non-negative number, got "${agent.budget_usd}".`);
+  }
+  if (!('runs' in agent)) return issues;
+  if (!Array.isArray(agent.runs)) {
+    error('agent.runs must be a list of runs (use runs: [] for none).');
+    return issues;
+  }
+
+  const handles = new Set(((model && model.users) || []).map((u) => u.handle));
+  const pricing = ai.pricing || {};
+  const priced = Object.keys(pricing).length > 0;
+  const created = typeof meta.created === 'string' && DATE_RE.test(meta.created) ? meta.created : null;
+  const unpricedModels = new Set();
+  const unknownHandles = new Set();
+  const sessions = new Map();
+
+  agent.runs.forEach((run, i) => {
+    const where = `agent.runs[${i}]`;
+    if (!isMapping(run)) {
+      error(`${where} must be a mapping with date, handle and model.`);
+      return;
+    }
+    const missing = ['date', 'handle', 'model'].filter((k) => !present(run[k]));
+    if (missing.length) error(`${where} is missing ${missing.join(', ')}.`);
+    if (present(run.date) && !DATE_RE.test(String(run.date))) {
+      error(`${where}.date must be a YYYY-MM-DD date, got "${run.date}".`);
+    }
+    for (const field of RUN_NUMBER_FIELDS) {
+      if (!present(run[field])) continue;
+      const n = toNumber(run[field]);
+      if (n == null || n < 0) error(`${where}.${field} must be a non-negative number, got "${run[field]}".`);
+    }
+
+    const runModel = present(run.model) ? String(run.model) : null;
+    if (priced && runModel && !pricing[runModel] && !unpricedModels.has(runModel)) {
+      unpricedModels.add(runModel);
+      warn('unpriced-model', `Model "${runModel}" has no pricing in ${AI_CONFIG_PATH}; runs on it without cost_usd are unpriced.`);
+    }
+    const handle = present(run.handle) ? String(run.handle) : null;
+    if (handle && handles.size && !handles.has(handle) && !unknownHandles.has(handle)) {
+      unknownHandles.add(handle);
+      warn('unknown-handle', `${where}.handle "${handle}" is not in config/users.yaml.`);
+    }
+    if (present(run.session)) {
+      const key = [run.source, run.session, run.model].map((v) => (v == null ? '' : String(v))).join('\u0000');
+      if (sessions.has(key)) {
+        warn(
+          'duplicate-run',
+          `${where} repeats agent.runs[${sessions.get(key)}] (same source, session and model); one session was recorded twice.`
+        );
+      } else {
+        sessions.set(key, i);
+      }
+    }
+    if (created && present(run.date) && DATE_RE.test(String(run.date)) && String(run.date) < created) {
+      warn('early-run', `${where} is dated ${run.date}, before the item was created on ${created}.`);
+    }
+  });
+
+  const usage = itemUsage(record, model);
+  if (usage && usage.overBudget) {
+    warn('over-budget', `Over budget: spent ${formatUsd(usage.cost)} of ${formatUsd(usage.budget)} (list-price equivalent).`);
+  }
+  return issues;
+}
+
+/** Workflow index from which policy.require_usage applies: require_usage_from, else the last column. */
+function requireUsageIndex(model) {
+  const workflow = (model && model.workflow) || [];
+  const from = model && model.ai && model.ai.policy.requireUsageFrom;
+  const idx = from != null ? workflow.indexOf(from) : -1;
+  return idx !== -1 ? idx : workflow.length - 1;
+}
+
+/**
+ * Run usageIssues over every item, the way validateRepository runs the ID
+ * checks: errors go onto `record.errors` and `model.loadErrors`
+ * ({ file, message, code }), warnings onto `record.warnings`, where the
+ * validator prints them with the item's path. Per-item warnings are not copied
+ * into `model.warnings`: that list holds file-less repository notices, and a
+ * second copy there would print every warning twice. The one repository-level
+ * notice — a require_usage_from that names no workflow column — does go there.
+ * Returns { errors, warnings }, both as [{ file, message, code }].
+ */
+function validateUsage(model) {
+  const errors = [];
+  const warnings = [];
+  const ai = model.ai || parseAiConfig(null);
+  const from = ai.policy.requireUsageFrom;
+  if (ai.policy.requireUsage && from != null && !(model.workflow || []).includes(from)) {
+    const last = (model.workflow || [])[(model.workflow || []).length - 1];
+    model.warnings.push(
+      `${AI_CONFIG_PATH}: policy.require_usage_from "${from}" is not a workflow column; using the last column${last ? ` (${last})` : ''}.`
+    );
+  }
+  for (const record of model.items.values()) {
+    for (const issue of usageIssues(record, model)) {
+      const entry = { file: record.path, message: issue.message, code: issue.code };
+      if (issue.level === 'error') {
+        record.errors.push(issue.message);
+        errors.push(entry);
+      } else {
+        record.warnings.push(issue.message);
+        warnings.push(entry);
+      }
+    }
+  }
+  model.loadErrors.push(...errors);
+  return { errors, warnings };
+}
+
 Object.assign(WS, {
   AI_CONFIG_PATH,
   TOKEN_KINDS,
@@ -280,8 +687,13 @@ Object.assign(WS, {
   runCost,
   resolveBudget,
   itemUsage,
+  summarize,
+  rollup,
   formatUsd,
   formatTokens,
   usageSummaryLines,
+  appendRunText,
+  usageIssues,
+  validateUsage,
 });
 })(window.WS = window.WS || {});
