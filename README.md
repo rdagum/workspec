@@ -372,6 +372,18 @@ defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
   usage") shows a cost chip: the list-price cost when every run is priced by
   `config/ai.yaml`, otherwise the total tokens; red once the item is over its
   budget. Hover it for tokens by kind, models, handles and the budget line.
+  Each column header shows the cost subtotal of its visible cards (prefixed
+  `≥` when some runs are unpriced).
+- **AI usage in the editor** — the `agent:` key renders as an "AI usage"
+  section instead of a read-only block: a budget input (the type default is the
+  placeholder), spent and remaining with a progress bar, the usage warnings
+  (over budget, unpriced model, duplicate run, early run), a runs table (the
+  latest 20; past runs are read-only) and an **Add run** form. Adding a run or
+  changing the budget is saved like any other edit; other keys under `agent`
+  are kept and stay editable in Raw YAML.
+- **AI usage totals in the sidebar** — total cost and tokens of the filtered
+  items, by column and by handle, for a period you pick (all time, last 7 days,
+  last 30 days, this month) by the runs' dates.
 - **Context** — read-only viewer for `context/*.md`.
 - **Validation** — required fields, ID format, filename-equals-ID, duplicate
   IDs across files and status-vs-workflow are checked; bad files surface

@@ -20,6 +20,7 @@ const { el, clear, renderMarkdown } = WS;
 const { stringifyYaml, parseYaml } = WS;
 const { validateItem, REQUIRED_FIELDS } = WS;
 const { detailDisplay, isEpic } = WS;
+const { itemUsage, runsOf, runCost, runTokens, resolveBudget, usageIssues, formatUsd, formatTokens, TOKEN_KINDS } = WS;
 
 const KNOWN_TYPES = ['EPIC', 'STORY', 'TASK', 'BUG', 'SPIKE'];
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
@@ -43,6 +44,25 @@ function savePrefs(prefs) {
     /* ignore — preferences just won't persist */
   }
 }
+// AI usage section (SPEC.md §18.2): at most this many runs are listed, the rest
+// summarised, so an epic's long history cannot flood the floating view.
+const MAX_RUN_ROWS = 20;
+const RUN_PURPOSES = ['plan', 'implement', 'review', 'feedback', 'triage'];
+const TOKEN_COLUMNS = [
+  ['input', 'in'],
+  ['output', 'out'],
+  ['cache_read', 'cache r'],
+  ['cache_write', 'cache w'],
+  ['cache_write_1h', 'cache w 1h'],
+];
+
+const isMapping = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const localToday = () => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
 // Fields whose values are conventionally arrays — rendered as multiline inputs.
 const ARRAY_FIELDS = new Set([
   'labels', 'depends_on', 'blocks', 'related', 'context',
@@ -239,6 +259,8 @@ class EditorView {
     for (const key of keys) {
       form.append(this._field(key, this.meta[key]));
     }
+    // An item without `agent` can still get its first run from the form.
+    if (!('agent' in this.meta)) form.append(this._usageSection());
     return form;
   }
 
@@ -290,6 +312,8 @@ class EditorView {
         const items = input.value.split('\n').map((s) => s.trim()).filter((s) => s !== '');
         this._setMeta(key, items);
       });
+    } else if (key === 'agent' && this._usageEditable(value)) {
+      return this._usageSection();
     } else if (value !== null && typeof value === 'object') {
       // Nested namespaces (extensions/custom/agent) — preserved, edit via raw.
       input = el('textarea', { class: 'field-input field-nested', rows: '3', readonly: true });
@@ -313,6 +337,245 @@ class EditorView {
     }
     row.append(input);
     return row;
+  }
+
+  // --- AI usage section (SPEC.md §18.2) -------------------------------------
+
+  /** The structured section handles only the well-formed shape; anything else stays a read-only textarea. */
+  _usageEditable(agent) {
+    return isMapping(agent) && (!('runs' in agent) || Array.isArray(agent.runs));
+  }
+
+  /**
+   * The `agent` namespace as a budget input, a spent line, the runs table and
+   * an add-run form. Every number comes from core/usage.js; keys under `agent`
+   * other than budget_usd and runs are left untouched in `this.meta`.
+   */
+  _usageSection() {
+    const model = this.store.model;
+    const section = el('div', { class: 'field usage-section' });
+    const summary = el('div', { class: 'usage-summary' });
+    const refreshSummary = () => summary.replaceChildren(...this._usageSummary().childNodes);
+
+    const agent = isMapping(this.meta.agent) ? this.meta.agent : {};
+    const budget = el('input', {
+      class: 'field-input usage-budget',
+      type: 'text',
+      inputmode: 'decimal',
+      'aria-label': 'Budget in USD',
+      value: agent.budget_usd != null ? String(agent.budget_usd) : '',
+    });
+    const typeDefault = resolveBudget({ type: this.meta.type }, model.ai);
+    if (typeDefault != null) budget.placeholder = String(typeDefault);
+    budget.addEventListener('input', () => {
+      const target = this._ensureAgent();
+      if (budget.value.trim() === '') delete target.budget_usd;
+      else target.budget_usd = coerce(budget.value.trim());
+      this._markDirty();
+      refreshSummary();
+    });
+
+    section.append(
+      el('label', { class: 'field-label', text: 'agent — AI usage' }),
+      el('div', { class: 'usage-budget-row' }, [
+        el('span', { text: 'Budget' }),
+        budget,
+        el('span', {
+          class: 'usage-hint',
+          text: typeDefault != null ? `USD (default for ${this.meta.type}: ${typeDefault})` : 'USD',
+        }),
+      ]),
+      summary
+    );
+    refreshSummary();
+
+    const runs = runsOf(this.meta) || [];
+    section.append(el('div', { class: 'usage-sub', text: `Runs (${runs.length})` }));
+    section.append(
+      runs.length ? this._runsTable(runs, model.ai) : el('div', { class: 'usage-hint', text: 'No runs recorded.' })
+    );
+    section.append(this._addRunForm(() => section.replaceWith(this._usageSection())));
+
+    const other = Object.keys(agent).filter((k) => k !== 'budget_usd' && k !== 'runs');
+    if (other.length) {
+      section.append(
+        el('div', { class: 'field-note', text: `Other keys (${other.join(', ')}) are kept; edit them in Raw YAML view.` })
+      );
+    }
+    return section;
+  }
+
+  _ensureAgent() {
+    if (!isMapping(this.meta.agent)) this.meta.agent = {};
+    return this.meta.agent;
+  }
+
+  /** Spent / remaining / bar plus the item's usage warnings (the validation strip shows only errors). */
+  _usageSummary() {
+    const model = this.store.model;
+    const box = el('div');
+    const record = { meta: this.meta };
+    const usage = itemUsage(record, model);
+    if (usage) {
+      let text = `Spent ${usage.priced ? formatUsd(usage.cost) : 'unpriced'}`;
+      if (usage.budget != null) text += ` of ${formatUsd(usage.budget)}`;
+      const row = el('div', { class: 'usage-spent' + (usage.overBudget ? ' over' : '') }, [el('span', { text })]);
+      if (usage.budget != null && usage.cost != null) {
+        const pct = usage.budget > 0 ? Math.round((usage.cost / usage.budget) * 100) : null;
+        const bar = el('div', {
+          class: 'usage-bar',
+          role: 'img',
+          'aria-label': pct == null ? 'budget is zero' : `${pct}% of budget`,
+        });
+        bar.append(el('div', { class: 'usage-bar-fill', style: `width: ${Math.min(100, pct == null ? 100 : pct)}%` }));
+        row.append(bar);
+        if (pct != null) row.append(el('span', { text: `${pct} %` }));
+        if (usage.remaining != null && !usage.overBudget) {
+          row.append(el('span', { class: 'usage-hint', text: `${formatUsd(usage.remaining)} remaining` }));
+        }
+      }
+      box.append(row);
+    }
+    for (const issue of usageIssues(record, model)) {
+      if (issue.level === 'warning') box.append(el('div', { class: 'v-warn', text: `⚠ ${issue.message}` }));
+    }
+    return box;
+  }
+
+  _runsTable(runs, ai) {
+    const hidden = Math.max(0, runs.length - MAX_RUN_ROWS);
+    const shown = runs.slice(hidden); // runs are appended, so these are the most recent
+    const th = (t) => el('th', { text: t });
+    const head = el('tr', {}, [
+      th('date'), th('handle'), th('model'),
+      ...TOKEN_COLUMNS.map(([, label]) => th(label)),
+      th('cost'), th('ref'),
+    ]);
+    const body = el('tbody');
+    let estimated = false;
+    for (const run of shown) {
+      const cost = runCost(run, ai);
+      const tokens = runTokens(run);
+      const est = run.estimated === true;
+      estimated = estimated || est;
+      const ref = run.ref == null ? '' : String(run.ref);
+      const refCell = el('td');
+      if (/^https?:\/\//i.test(ref)) {
+        refCell.append(
+          el('a', { href: ref, target: '_blank', rel: 'noopener noreferrer', text: ref.replace(/^https?:\/\/(www\.)?/i, '') })
+        );
+      } else {
+        refCell.textContent = ref;
+      }
+      body.append(
+        el('tr', {}, [
+          el('td', { text: run.date == null ? '' : String(run.date) }),
+          el('td', { text: run.handle == null ? '' : String(run.handle) }),
+          el('td', { text: run.model == null ? '' : String(run.model) }),
+          ...TOKEN_COLUMNS.map(([kind]) => el('td', { class: 'num', text: tokens[kind] ? formatTokens(tokens[kind]) : '' })),
+          el('td', { class: 'num', text: (cost == null ? 'unpriced' : formatUsd(cost)) + (est ? ' ~' : '') }),
+          refCell,
+        ])
+      );
+    }
+    const wrap = el('div', { class: 'usage-runs' }, [
+      el('table', { class: 'usage-table' }, [el('thead', {}, [head]), body]),
+    ]);
+    if (hidden) {
+      wrap.append(el('div', { class: 'usage-hint', text: `${hidden} earlier run${hidden === 1 ? '' : 's'} not shown; see Raw YAML.` }));
+    }
+    if (estimated) wrap.append(el('div', { class: 'usage-hint', text: '~ estimated' }));
+    return wrap;
+  }
+
+  _addRunForm(onAdded) {
+    const model = this.store.model;
+    const users = model.users || [];
+    const field = (label, input) => el('label', { class: 'usage-add-field' }, [el('span', { text: label }), input]);
+    const text = (props) => el('input', { class: 'field-input', type: 'text', ...props });
+
+    const date = text({ value: localToday(), 'aria-label': 'Run date' });
+    const localHandle = (model.local || {}).handle || '';
+    let handle;
+    if (users.length) {
+      handle = el('select', { class: 'field-input', 'aria-label': 'Run handle' });
+      for (const u of users) handle.append(el('option', { value: u.handle }, u.handle));
+      handle.value = users.some((u) => u.handle === localHandle) ? localHandle : users[0].handle;
+    } else {
+      handle = text({ value: localHandle, 'aria-label': 'Run handle' });
+    }
+    const runModel = text({ list: 'usage-models', placeholder: 'model', 'aria-label': 'Run model' });
+    const datalist = el(
+      'datalist',
+      { id: 'usage-models' },
+      Object.keys((model.ai && model.ai.pricing) || {}).map((m) => el('option', { value: m }))
+    );
+    const tokenInputs = {};
+    for (const [kind, label] of TOKEN_COLUMNS) {
+      tokenInputs[kind] = text({ inputmode: 'numeric', 'aria-label': `${label} tokens` });
+    }
+    const cost = text({ inputmode: 'decimal', placeholder: 'from pricing', 'aria-label': 'Cost in USD' });
+    const purpose = el('select', { class: 'field-input', 'aria-label': 'Run purpose' });
+    purpose.append(el('option', { value: '' }, '—'));
+    for (const p of RUN_PURPOSES) purpose.append(el('option', { value: p }, p));
+    const ref = text({ placeholder: 'PR URL or note', 'aria-label': 'Run reference' });
+    const error = el('div', { class: 'v-error' });
+
+    const add = el('button', {
+      class: 'btn-mini',
+      type: 'button',
+      text: 'Add',
+      onclick: () => {
+        const run = { date: date.value.trim(), handle: handle.value.trim(), model: runModel.value.trim() };
+        const missing = ['date', 'handle', 'model'].filter((k) => !run[k]);
+        if (missing.length) {
+          error.textContent = `✕ ${missing.join(', ')} required.`;
+          return;
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(run.date)) {
+          error.textContent = '✕ date must be YYYY-MM-DD.';
+          return;
+        }
+        for (const [kind, field] of TOKEN_KINDS) {
+          const v = tokenInputs[kind].value.trim();
+          if (v === '') continue;
+          if (!/^\d+$/.test(v)) {
+            error.textContent = `✕ ${field} must be a whole number.`;
+            return;
+          }
+          run[field] = parseInt(v, 10);
+        }
+        if (cost.value.trim() !== '') {
+          if (!/^\d+(\.\d+)?$/.test(cost.value.trim())) {
+            error.textContent = '✕ cost must be a non-negative number.';
+            return;
+          }
+          run.cost_usd = coerce(cost.value.trim());
+        }
+        if (purpose.value) run.purpose = purpose.value;
+        if (ref.value.trim()) run.ref = ref.value.trim();
+        run.source = 'manual';
+        const agent = this._ensureAgent();
+        if (!Array.isArray(agent.runs)) agent.runs = [];
+        agent.runs.push(run);
+        this._markDirty();
+        onAdded();
+      },
+    });
+
+    return el('div', { class: 'usage-add' }, [
+      el('div', { class: 'usage-sub', text: 'Add run' }),
+      el('div', { class: 'usage-add-row' }, [field('date', date), field('handle', handle), field('model', runModel), datalist]),
+      el('div', { class: 'usage-add-row' }, [
+        field('input', tokenInputs.input),
+        field('output', tokenInputs.output),
+        field('cache read', tokenInputs.cache_read),
+        field('cache write', tokenInputs.cache_write),
+        field('cache write 1h', tokenInputs.cache_write_1h),
+      ]),
+      el('div', { class: 'usage-add-row' }, [field('cost', cost), field('purpose', purpose), field('ref', ref), add]),
+      error,
+    ]);
   }
 
   // --- Right pane: markdown ------------------------------------------------

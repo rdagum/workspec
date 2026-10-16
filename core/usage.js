@@ -360,6 +360,33 @@ function rollup(model, id) {
   });
 }
 
+/** Periods the board's usage view offers, in display order. */
+const USAGE_PERIODS = [
+  ['all', 'All time'],
+  ['7d', 'Last 7 days'],
+  ['30d', 'Last 30 days'],
+  ['month', 'This month'],
+];
+
+function isoDate(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * The `{ since, until }` range (YYYY-MM-DD, inclusive, local time) that
+ * summarize() takes for a period key: 'all' is unbounded, '7d' / '30d' end
+ * today and span that many days, 'month' starts on the 1st. An unknown key
+ * counts as 'all'.
+ */
+function periodRange(period, today = new Date()) {
+  const day = (offset) => isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset));
+  if (period === '7d') return { since: day(6), until: day(0) };
+  if (period === '30d') return { since: day(29), until: day(0) };
+  if (period === 'month') return { since: isoDate(new Date(today.getFullYear(), today.getMonth(), 1)), until: day(0) };
+  return { since: null, until: null };
+}
+
 // --- Formatting --------------------------------------------------------------
 
 /** '$1.12'; amounts under a cent show as '<$0.01' rather than '$0.00'. */
@@ -689,6 +716,8 @@ Object.assign(WS, {
   itemUsage,
   summarize,
   rollup,
+  USAGE_PERIODS,
+  periodRange,
   formatUsd,
   formatTokens,
   usageSummaryLines,

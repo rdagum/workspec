@@ -78,9 +78,23 @@ class BoardView {
 
     for (const record of col.items) list.append(this._renderCard(record));
 
+    // Cost subtotal of the visible cards (same switch as the card chip).
+    const sub = this._showCost() ? this.store.columnUsage(col.items) : null;
+    let subtotal = null;
+    if (sub && sub.runs > 0) {
+      subtotal = el('span', {
+        class: 'column-cost',
+        title: sub.priced
+          ? 'Cost of the cards in this column (list-price equivalent)'
+          : 'At least this much; some runs are unpriced',
+        text: sub.priced ? formatUsd(sub.cost) : `≥ ${formatUsd(sub.knownCost)}`,
+      });
+    }
+
     return el('section', { class: 'column' + (col.orphan ? ' column-orphan' : '') }, [
       el('header', { class: 'column-header' }, [
         el('span', { class: 'column-title', text: col.name }),
+        subtotal,
         el('span', { class: 'column-count', text: String(col.items.length) }),
       ]),
       list,

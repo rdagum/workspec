@@ -532,3 +532,26 @@ body.unsupported .board-mount, body.unsupported #sidebar-mount { opacity: 0.4; p
   box-shadow: var(--shadow); padding: 12px 14px; text-align: left;
 }
 .menu .recent { margin: 0; max-width: none; }
+
+/* ---- AI usage (column subtotal, editor section, sidebar totals) ----------- */
+.column-cost { margin-left: auto; margin-right: 8px; font-size: 12px; color: var(--ok); font-variant-numeric: tabular-nums; }
+.usage-hint { color: var(--text-faint); font-size: 12px; }
+.usage-sub { font-size: 12px; font-weight: 600; color: var(--text-dim); margin: 8px 0 4px; }
+.usage-budget-row, .usage-spent { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.usage-budget { width: 90px; }
+.usage-spent.over { color: var(--danger); }
+.usage-bar { flex: 1 1 80px; min-width: 80px; height: 8px; background: var(--bg-3); border-radius: 4px; overflow: hidden; }
+.usage-bar-fill { height: 100%; background: var(--ok); }
+.usage-spent.over .usage-bar-fill { background: var(--danger); }
+.usage-runs { overflow-x: auto; }
+.usage-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.usage-table th, .usage-table td { padding: 2px 6px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }
+.usage-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.usage-add-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; margin-bottom: 6px; }
+.usage-add-field { display: flex; flex-direction: column; font-size: 11px; color: var(--text-faint); gap: 2px; flex: 1 1 90px; min-width: 70px; }
+.usage-list { list-style: none; margin: 0 0 6px; padding: 0; font-size: 12px; }
+.usage-row { display: flex; gap: 8px; padding: 2px 0; }
+.usage-row-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.usage-row-tokens { color: var(--text-faint); }
+.usage-row-cost { font-variant-numeric: tabular-nums; min-width: 52px; text-align: right; }
+.usage-total { margin: 6px 0; }
