@@ -617,7 +617,7 @@ after a retention period, so record soon. The
 board already shows the cost chip on cards (leave `cost` out of
 `settings.card_fields` in `board.yaml` to hide it); the editor section and the
 sidebar totals ship with STORY-001003. `.workspec-demo/` carries an `ai.yaml`
-with fictional models and three items with runs — one over budget, one
+with Claude list prices and three items with runs — one over budget, one
 unpriced, one with a recorded cost — so the chip can be seen without waiting
 for a real run.
 
