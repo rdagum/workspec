@@ -2,7 +2,7 @@
 # Print the branch this repository integrates work into.
 #
 # Prefers "develop" when the remote has one, otherwise the remote's default
-# branch. Nothing about the routine may assume "develop": matchday has one,
+# branch. Nothing about the routine may assume "develop": a repo may have one,
 # other WorkSpec repos integrate straight into main.
 set -euo pipefail
 

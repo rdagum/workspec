@@ -1,6 +1,6 @@
 ---
-name: address-pr-feedback
-description: Address the review feedback on one open workspec pull request — implement the requested changes, reply to each thread and resolve it, and re-run the project's quality gates. Use before starting new backlog work, or when the user asks to "address the PR comments", "handle review feedback", "resolve the review threads on PR N", or mentions "/address-pr-feedback".
+name: workspec-address-pr-feedback
+description: Address the review feedback on one open workspec pull request — implement the requested changes, reply to each thread and resolve it, and re-run the project's quality gates. Use before starting new backlog work, or when the user asks to "address the PR comments", "handle review feedback", "resolve the review threads on PR N", or mentions "/workspec-address-pr-feedback".
 allowed-tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep, Agent, Skill
 ---
 
@@ -29,13 +29,14 @@ everything about provisioning and verification comes from that repository's own
 - **Never silently disagree.** If a comment is wrong or is really a question,
   reply saying so and leave the thread open. Do not change code to match a
   comment you believe is mistaken.
-- **Never touch the main checkout**, per the worktree isolation rules.
+- **Never modify the main checkout.** Step 0 only reads there; everything from
+  Step 1 on runs in the item's worktree.
 
 ## Step 0 — Select the pull request
 
 ```bash
 gh auth status
-bash ~/.claude/skills/address-pr-feedback/scripts/select_pr.sh
+bash .claude/skills/workspec-address-pr-feedback/scripts/select_pr.sh
 ```
 
 The script picks the lowest-numbered open PR whose head branch starts with
@@ -49,6 +50,11 @@ its threads, so thread state is the only reliable signal.
 If it prints `NONE`, report that line and **stop** — the review queue is clear.
 
 ## Step 1 — Get onto the branch
+
+If the session is not in a worktree yet (`[ -f .git ]` fails), get into one
+first, exactly as `workspec-daily-work` Step 0 "Get into a worktree" describes:
+`<id>` is the item id in the PR's branch `workspec/<id>-…` and `<start>` is
+`origin/<branch>`. When `workspec-daily-work` invoked this skill, it already did.
 
 The branch is very likely already checked out in another worktree, and git
 refuses the same branch in two. Work detached and push to the branch ref:
@@ -96,11 +102,11 @@ the point is stale.
 
 Sort every unresolved thread into one of three buckets and handle it:
 
-| Bucket | What it looks like | What to do |
-| --- | --- | --- |
-| **Change** | A concrete request: remove this, rename that, handle this case | Implement it |
-| **Question** | Asks why something was done, or what happens if | Answer in a reply; change code only if the answer reveals a real defect |
-| **Disagreement** | The request rests on something you believe is factually wrong | Reply with the evidence and leave the thread **open** for the user to decide |
+| Bucket           | What it looks like                                             | What to do                                                                   |
+| ---------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Change**       | A concrete request: remove this, rename that, handle this case | Implement it                                                                 |
+| **Question**     | Asks why something was done, or what happens if                | Answer in a reply; change code only if the answer reveals a real defect      |
+| **Disagreement** | The request rests on something you believe is factually wrong  | Reply with the evidence and leave the thread **open** for the user to decide |
 
 Bias toward implementing. Use the disagreement bucket only when you can point at
 a specific file, test or doc that contradicts the comment — not when you merely
@@ -110,7 +116,15 @@ prefer your version.
 comments often reveal that the WorkSpec item's acceptance criteria or scope were
 mistaken, not just the code. Correcting only the code leaves the bad criteria in
 `.workspec/items/` to mislead the next run or the next reader. Update the item
-file in the same commit and say so in the reply.
+file in the same commit and say so in the reply. Never touch its `status:` or
+`updated:` lines on the PR branch: status lives on the integration branch (see
+`workspec-daily-work`, step 2), and editing it here makes the merge conflict.
+
+**Stacked PRs.** A PR may be stacked on another workspec PR (its base is that
+PR's branch, and its body opens with "Stacked on"). Fixes pushed to the lower
+PR don't reach the PRs stacked on it. Say so in the reply, naming those PRs, so
+the user can merge the lower PR first or ask for the stack to be updated. Don't
+push to their branches from this run.
 
 Commit per thread where the changes are separable, conventional-commit style,
 referencing the item id and the PR number in the body.
@@ -129,7 +143,20 @@ a test to make it pass. If the gates cannot be made to pass, push what exists,
 reply on the threads explaining the blockage, leave them **unresolved**, and
 report.
 
-## Step 5 — Push
+## Step 5 — Record usage, then push
+
+Every run appends its token usage to the item, this one included
+(https://github.com/rdagum/workspec#tracking-ai-usage). The script lives with
+the daily routine and sums this session's transcript and subagent transcripts
+per model:
+
+```bash
+python .claude/skills/workspec-daily-work/scripts/record_usage.py .workspec/items/<ID>.md --session <session-uuid>
+```
+
+The session uuid is the directory that precedes `scratchpad` in this session's
+scratchpad path. Commit the item (`chore(workspec): record AI usage on <ID>`)
+as part of this push; the script never bumps `updated`.
 
 ```bash
 git push origin HEAD:<branch>
@@ -166,7 +193,8 @@ gates rejected. The user closes those.
 ## Step 7 — Stop what you started
 
 Stop the services the gates skill had you start, by the pids it had you record.
-Leave shared infrastructure running. Leave the worktree for Desktop to archive.
+Leave shared infrastructure running. Leave the worktree in place; the
+`workspec-worktrees-cleanup` skill removes it once the PR merges.
 
 ## Step 8 — Report
 
