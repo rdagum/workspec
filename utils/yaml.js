@@ -9,6 +9,8 @@
 //   - block sequences ("- item")
 //   - inline flow sequences ("[a, b, c]" and "[]")
 //   - inline flow mappings ("{ block: 1, owner: rdagum }" and "{}")
+//   - either flow form wrapped onto lines indented below its key, as editors
+//     that format to a print width write it
 //   - nested mappings (for reserved namespaces: extensions / custom / agent)
 //   - block scalars ("|" and ">")
 //
@@ -73,11 +75,13 @@ function parseScalar(raw) {
   return s;
 }
 
-// Split a flow-sequence body on commas that are not inside quotes.
+// Split a flow-collection body on commas that are not inside quotes or a
+// nested collection.
 function splitFlow(inner) {
   const out = [];
   let buf = '';
   let quote = null;
+  let depth = 0;
   for (const ch of inner) {
     if (quote) {
       if (ch === quote) quote = null;
@@ -85,7 +89,13 @@ function splitFlow(inner) {
     } else if (ch === '"' || ch === "'") {
       quote = ch;
       buf += ch;
-    } else if (ch === ',') {
+    } else if (ch === '{' || ch === '[') {
+      depth++;
+      buf += ch;
+    } else if (ch === '}' || ch === ']') {
+      depth--;
+      buf += ch;
+    } else if (ch === ',' && depth <= 0) {
       out.push(buf.trim());
       buf = '';
     } else {
@@ -120,6 +130,24 @@ function splitKeyValue(content) {
   return null;
 }
 
+// Net bracket depth of a flow collection's text, ignoring quoted brackets.
+function flowDepth(s) {
+  let depth = 0;
+  let quote = null;
+  for (const ch of s) {
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === '{' || ch === '[') {
+      depth++;
+    } else if (ch === '}' || ch === ']') {
+      depth--;
+    }
+  }
+  return depth;
+}
+
 /**
  * Parse a YAML document (the front-matter block, without the `---` fences)
  * into a plain object whose key order matches the source.
@@ -139,6 +167,29 @@ function parseYaml(text) {
       return l;
     }
     return null;
+  }
+
+  // A flow collection may run over several lines: an editor that wraps at a
+  // print width writes "key:\n    { a: 1, b: 2 }" or breaks inside the braces.
+  // Join the lines indented deeper than the key until the brackets balance;
+  // if they never do, consume nothing and return the first line as written.
+  function readFlow(first, keyIndent) {
+    if (flowDepth(first) <= 0) return first;
+    const start = idx;
+    let joined = first;
+    while (idx < lines.length) {
+      const line = lines[idx];
+      if (line.trim() === '' || line.trimStart().startsWith('#')) {
+        idx++;
+        continue;
+      }
+      if (indentOf(line) <= keyIndent) break;
+      joined += ' ' + line.trim();
+      idx++;
+      if (flowDepth(joined) <= 0) return joined;
+    }
+    idx = start;
+    return first;
   }
 
   function parseBlockScalar(parentIndent, marker) {
@@ -230,10 +281,10 @@ function parseYaml(text) {
         continue;
       }
       if (rest !== '') {
-        obj[key] = parseScalar(rest);
+        obj[key] = parseScalar(/^[[{]/.test(rest) ? readFlow(rest, ci) : rest);
         continue;
       }
-      // Empty value -> nested mapping, sequence, or null.
+      // Empty value -> nested mapping, sequence, flow collection, or null.
       const nxt = nextSignificant();
       if (!nxt) {
         obj[key] = null;
@@ -241,7 +292,11 @@ function parseYaml(text) {
       }
       const ni = indentOf(nxt);
       const ncontent = nxt.slice(ni);
-      if (ni > ci && (ncontent.startsWith('- ') || ncontent === '-')) {
+      if (ni > ci && /^[[{]/.test(ncontent)) {
+        while (lines[idx] !== nxt) idx++;
+        idx++;
+        obj[key] = parseScalar(readFlow(ncontent, ci));
+      } else if (ni > ci && (ncontent.startsWith('- ') || ncontent === '-')) {
         obj[key] = parseSequence(ni);
       } else if (ni > ci) {
         obj[key] = parseMapping(ni);

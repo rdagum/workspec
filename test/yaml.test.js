@@ -458,6 +458,31 @@ describe('yaml: flow mappings', () => {
     assert.deepEqual(parseYaml('a: "{ quoted: text }"'), { a: '{ quoted: text }' });
   });
 
+  it('reads a flow mapping wrapped onto the line below its key', () => {
+    // As Prettier writes a config/ai.yaml pricing row longer than 80 columns.
+    const text =
+      'pricing:\r\n' +
+      '  claude-fable-5-1:\r\n' +
+      '    { input: 10, output: 50, cache_read: 0.25, cache_write: 12.5, cache_write_1h: 20 }\r\n' +
+      '  claude-fable-5: { input: 10, output: 50 }\r\n';
+    assert.deepEqual(parseYaml(text), {
+      pricing: {
+        'claude-fable-5-1': { input: 10, output: 50, cache_read: '0.25', cache_write: '12.5', cache_write_1h: 20 },
+        'claude-fable-5': { input: 10, output: 50 },
+      },
+    });
+  });
+
+  it('reads flow collections broken across several lines', () => {
+    const text = 'a:\n  {\n    x: 1,\n    # note\n    y: [p,\n      q],\n  }\nb: { u: 1,\n  v: 2 }\nc: 3\n';
+    assert.deepEqual(parseYaml(text), { a: { x: 1, y: ['p', 'q'] }, b: { u: 1, v: 2 }, c: 3 });
+  });
+
+  it('does not swallow the next key when a bracket never closes', () => {
+    assert.deepEqual(parseYaml('a: {open\nb: 2\n'), { a: '{open', b: 2 });
+    assert.deepEqual(parseYaml('a: [WIP] {draft\nb: 2\n'), { a: '[WIP] {draft', b: 2 });
+  });
+
   it('serializes a flow mapping as a block mapping (like flow sequences)', () => {
     const obj = parseYaml('blocks:\n  - { block: 1, owner: rdagum }');
     assert.equal(stringifyYaml(obj), 'blocks:\n  - block: 1\n    owner: rdagum');
