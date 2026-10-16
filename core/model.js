@@ -10,7 +10,7 @@
 
 const { parseItem, parseConfig, validateItem } = WS;
 const { parseIdAllocation, parseIdBlocks, validateRepository, REGISTRY_PATH } = WS;
-const { parseAiConfig, AI_CONFIG_PATH } = WS;
+const { parseAiConfig, validateUsage, AI_CONFIG_PATH } = WS;
 
 const SUPPORTED_MAJOR = 1;
 
@@ -184,6 +184,8 @@ async function loadRepository(fs) {
   }
   // Cross-file checks: duplicate IDs, block ownership, local block vs registry.
   validateRepository(model);
+  // AI usage (SPEC.md §18.2): run shape, pricing, budgets, handles, policy.
+  validateUsage(model);
 
   // --- Templates -----------------------------------------------------------
   const templateFiles = await fs.listFiles('templates', { ext: '.md' });
