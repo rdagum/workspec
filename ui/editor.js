@@ -4,7 +4,9 @@
 //   Right — Markdown body
 //
 // In the `floating` detail display the modal is too short to stack both panes,
-// so the same two panes become tabs and only the active one is built.
+// so the same two panes become tabs and only the active one is built. There the
+// AI usage section (`agent`) gets a third tab of its own instead of sitting in
+// the metadata form.
 //
 // Typing updates an in-memory working copy and refreshes only the small status
 // strip in place — it never re-renders the editor, so input focus is preserved.
@@ -76,7 +78,7 @@ class EditorView {
     const prefs = loadPrefs();
     this.rawMode = !!prefs.rawMode;
     this.preview = !!prefs.preview;
-    this.tab = prefs.tab === 'body' ? 'body' : 'meta'; // only used by the floating layout
+    this.tab = ['body', 'usage'].includes(prefs.tab) ? prefs.tab : 'meta'; // only used by the floating layout
     this._dirty = false; // unsaved edits in the working copy
     this._path = null;
   }
@@ -114,7 +116,8 @@ class EditorView {
     if (detailDisplay(this.store.model) === 'floating') {
       // Tabs: one pane at a time, so the Markdown body gets the full modal.
       this.root.append(this._tabs());
-      const pane = this.tab === 'body' ? this._bodyPane() : this._metaPane();
+      const pane =
+        this.tab === 'body' ? this._bodyPane() : this.tab === 'usage' ? this._usagePane() : this._metaPane();
       this.root.append(el('div', { class: 'editor-panes tabbed' }, [pane]));
     } else {
       this.root.append(el('div', { class: 'editor-panes' }, [this._metaPane(), this._bodyPane()]));
@@ -145,7 +148,13 @@ class EditorView {
     return el('div', { class: 'editor-tabs', role: 'tablist' }, [
       tab('meta', 'Metadata'),
       tab('body', 'Markdown'),
+      tab('usage', 'AI usage'),
     ]);
+  }
+
+  /** True when `agent` is shown on the AI usage tab rather than in the metadata form. */
+  _usageTabbed() {
+    return detailDisplay(this.store.model) === 'floating';
   }
 
   _header(record) {
@@ -177,6 +186,8 @@ class EditorView {
               if (!this._commitRaw()) return;
             }
             this.rawMode = !this.rawMode;
+            // Raw YAML lives on the Metadata tab; from the AI usage tab, go there.
+            if (this.tab === 'usage') this.tab = 'meta';
             this._savePrefs();
             this.render();
           },
@@ -256,11 +267,14 @@ class EditorView {
     const keys = [...Object.keys(this.meta)];
     for (const r of REQUIRED_FIELDS) if (!keys.includes(r)) keys.push(r);
 
+    const tabbed = this._usageTabbed();
     for (const key of keys) {
+      // With its own tab, a well-formed `agent` is edited there, not here.
+      if (key === 'agent' && tabbed && this._usageEditable(this.meta[key])) continue;
       form.append(this._field(key, this.meta[key]));
     }
     // An item without `agent` can still get its first run from the form.
-    if (!('agent' in this.meta)) form.append(this._usageSection());
+    if (!('agent' in this.meta) && !tabbed) form.append(this._usageSection());
     return form;
   }
 
@@ -340,6 +354,32 @@ class EditorView {
   }
 
   // --- AI usage section (SPEC.md §18.2) -------------------------------------
+
+  /**
+   * The AI usage tab of the floating layout. Its edits go to `this.meta`, so a
+   * pending raw-YAML buffer is dropped (it already parsed into `this.meta`) and
+   * the raw view is rebuilt from the edited working copy; while that buffer has
+   * an error the section is withheld rather than edit stale values.
+   */
+  _usagePane() {
+    const pane = el('div', { class: 'pane pane-usage' });
+    const body = el('div', { class: 'usage-pane' });
+    if (this._rawError) {
+      body.append(el('div', { class: 'usage-hint', text: 'Fix the YAML errors on the Metadata tab first.' }));
+    } else if ('agent' in this.meta && !this._usageEditable(this.meta.agent)) {
+      body.append(
+        el('div', {
+          class: 'usage-hint',
+          text: 'agent is not a mapping with a runs list, so it can only be edited in Raw YAML view.',
+        })
+      );
+    } else {
+      this._rawText = null;
+      body.append(this._usageSection());
+    }
+    pane.append(body);
+    return pane;
+  }
 
   /** The structured section handles only the well-formed shape; anything else stays a read-only textarea. */
   _usageEditable(agent) {

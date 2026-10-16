@@ -375,8 +375,11 @@ defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
   Each column header shows the cost subtotal of its visible cards (prefixed
   `≥` when some runs are unpriced).
 - **AI usage in the editor** — the `agent:` key renders as an "AI usage"
-  section instead of a read-only block: a budget input (the type default is the
-  placeholder), spent and remaining with a progress bar, the usage warnings
+  section instead of a read-only block; in the `floating` detail display it has
+  a tab of its own next to Metadata and Markdown, and in the side panels it
+  sits in the metadata form. The section holds a budget input (the type
+  default is the placeholder), spent and remaining with a progress bar, the
+  usage warnings
   (over budget, unpriced model, duplicate run, early run), a runs table (the
   latest 20; past runs are read-only) and an **Add run** form. Adding a run or
   changing the budget is saved like any other edit; other keys under `agent`
