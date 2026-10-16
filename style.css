@@ -202,7 +202,7 @@ button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid t
 .context-link:hover { background: var(--bg-3); color: var(--text); }
 .context-link.active { background: var(--bg-3); color: var(--accent); }
 
-/* Epics focus list (docs/DESIGN-2026-09-epic-focus.md §2) */
+/* Epics focus list (README "Epic focus") */
 .epic-link { display: flex; align-items: baseline; gap: 6px; }
 .epic-link::before { content: none; }
 .epic-id { flex: 0 0 auto; font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-faint); }

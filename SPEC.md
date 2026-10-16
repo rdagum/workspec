@@ -661,7 +661,7 @@ A duplicate ID that reaches a merge is repaired by renumbering the item on the s
 
 ## 18.2 AI Usage and Budgets (WS-1.2 extension)
 
-**Status:** optional extension introduced by WorkSpec 1.2. An implementation that ignores it remains 1.0-compliant. A repository in which no item carries `agent.runs` and no `config/ai.yaml` exists behaves exactly as in 1.0. Design rationale: `docs/DESIGN-2026-09-ai-usage.md`.
+**Status:** optional extension introduced by WorkSpec 1.2. An implementation that ignores it remains 1.0-compliant. A repository in which no item carries `agent.runs` and no `config/ai.yaml` exists behaves exactly as in 1.0. Rationale and the user-facing description: README "Tracking AI usage".
 
 ### Problem
 

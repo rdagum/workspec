@@ -164,7 +164,7 @@ class BoardView {
     }
 
     // With an epic focused, flag dependencies that hold this card up from
-    // outside the focused board (docs/DESIGN-2026-09-epic-focus.md §1.8).
+    // outside the focused board (README "Epic focus").
     const outside = this.store.outsideBlockers(record);
     if (outside.length) {
       card.append(

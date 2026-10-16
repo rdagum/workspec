@@ -271,7 +271,7 @@ function distinctValues(items, field) {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-// --- Epic membership (docs/DESIGN-2026-09-epic-focus.md §1.3) ---------------
+// --- Epic membership (README "Epic focus") ---------------
 //
 // An item belongs to an epic when the epic appears anywhere on its `parent`
 // chain — the same relation SPEC.md §18.2 uses for the AI-usage roll-up. Only

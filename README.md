@@ -358,6 +358,12 @@ defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
   The other filters still apply on top; click the epic again or **Clear
   filters** to see everything. **No epic** shows the work that belongs to no
   epic. Epics in the last column are hidden until you tick **Show done**.
+  The focus is a viewer-only filter, not persisted across sessions, and is
+  cleared if the epic disappears after a reload. Membership is the whole
+  `parent` chain (cycle-safe, nested epics allowed), and progress counts all
+  members, not just the filtered ones. The list is a sidebar section rather
+  than a board column because every board column is a workflow status and a
+  drop target.
   While an epic is focused, **+ New work item** sets the new item's `parent`
   to it (unless you are creating an epic), and a card held up by open work
   outside the epic (its `depends_on`, or another item's `blocks`) shows
@@ -466,13 +472,32 @@ are immutable; the branch adapts. This is the one sanctioned exception to
 Repositories that do not set `id_allocation` keep the sequential behaviour and
 only gain the duplicate-ID and filename checks.
 
+**Known limits — read this before pointing agents at a block repository.**
+
+- *The block comes from `user.local.yaml`, which is git-ignored.* An agent in a
+  throwaway worktree (for example a scheduled routine under
+  `.claude/worktrees/`) checks out tracked files only, so the registry is
+  there but the local file is not, and the app and tools report "no block"
+  rather than guess. `SKILL.md` tells agents to use the registry entry whose
+  `owner` is them, but the code does not yet resolve a block from the owner;
+  until it does, give each such worktree its own `user.local.yaml`.
+- *"What is taken" is the files in your checkout.* An ID minted on a branch
+  that has not merged is invisible to a second branch cut from the same base,
+  so two runs that each file an item from `origin/main` mint the same ID
+  whether or not blocks are on. Blocks only separate *different* allocators;
+  they do not protect one allocator from itself across branches. Until IDs
+  are also reserved from every ref (`git log --all --diff-filter=A --name-only
+  -- .workspec/items` lists every ID ever added), merge or push a filed item
+  before the next run starts, and let CI's merge-result check catch the rest.
+- A claim made on an unmerged branch is likewise invisible until it merges, so
+  an unattended run should not claim a block itself.
+
 ## Tracking AI usage
 
 Items are worked by AI agents, and every session consumes tokens. Git records
 who changed what, not what it cost, and the transcripts that know are local and
 short-lived — so a run's usage is recorded on the item itself, under the
-reserved `agent:` namespace (`SPEC.md` §18.2; design:
-`docs/DESIGN-2026-09-ai-usage.md`):
+reserved `agent:` namespace (`SPEC.md` §18.2):
 
 ```yaml
 agent:
@@ -490,7 +515,19 @@ agent:
 ```
 
 Runs are facts: tokens by kind, model, handle, date. They are appended, never
-edited, and appending one does not bump `updated`. Everything else is derived
+edited, and appending one does not bump `updated`. `date`, `handle` and `model`
+are required; every other key is optional (`cache_write_1h_tokens`, `cost_usd`
+as reported by the tool, `purpose` — plan, implement, review, feedback or
+triage — `ref`, `session`, `source`, `estimated`). Token names mirror the
+provider's usage object, an absent count is zero, and decimals such as
+`cost_usd` stay exactly as written. `session` makes an import idempotent: a
+second run with the same `source`, `session` and `model` is refused (a
+validator warning if it gets in anyway). `estimated: true` marks numbers
+approximated by hand or trimmed by a filter. There is deliberately no
+duration: wall clock is not consumption, and time tracking is a non-goal.
+Triage that belongs to no item goes on the parent epic with
+`purpose: triage`. A mistaken run is corrected in a dedicated commit that says
+why; that is the only time a run changes. Everything else is derived
 when the repository loads — the cost of a run from an optional pricing table in
 `config/ai.yaml` (a list-price equivalent, so it means the same thing whether
 you pay per token or by subscription), an item's total, an epic's roll-up over
@@ -499,16 +536,72 @@ the per-type default in `ai.yaml`). Nothing derived is written back. Two
 branches that each append a run to the same item conflict on the same lines;
 keep both.
 
-**Budgets are a rule for agents, not for CI.** The validator warns on
-`over-budget` and on an agent-assigned item that reached review without runs
-(`missing-usage`); an agent checks the budget before it starts and stops if it
-is spent (`SKILL.md` "AI Usage and Budgets"). CI stays green.
+**Configuration.** `config/ai.yaml` is optional and committed:
+
+```yaml
+# Prices are list-price equivalents per million tokens. Fill them from the
+# published price list and date them in a comment; never hard-code them.
+pricing:
+  claude-fable-5-1: { input: …, output: …, cache_read: …, cache_write: …, cache_write_1h: … }
+defaults:
+  budget_usd: { STORY: 10, BUG: 5, TASK: 3, SPIKE: 5 }   # EPIC absent: an epic rolls up its children
+policy:
+  require_usage: true        # agent-assigned item without a `runs` key -> warning …
+  require_usage_from: Review # … once it reaches this column or later (default: the last column)
+```
+
+The `_usd` suffix is the currency; there is no `currency` key. A budget is
+`agent.budget_usd`, else `defaults.budget_usd` for the item's type, else none
+(`null` at either level means none). `require_usage` is satisfied by the
+presence of `agent.runs`, even empty: `runs: []` says "this agent-assigned
+item was finished by hand". In `users.yaml`, `kind: agent` (and `model`) marks
+an entry as an agent, which is how `require_usage` and the roll-ups tell
+agents from people.
+
+**Derived values.** A run's cost is its `cost_usd`, else its tokens priced by
+`pricing[model]`, else unknown. An item's cost is the sum of its runs and is
+unknown if any run is unpriced, because a partial sum would be misread. A
+derived cost is a list-price equivalent, not an invoice: subscription users
+pay no marginal cost, but the number still shows size and trend. An epic's
+roll-up sums the items that reach it through `parent` (cycle-safe) and is
+compared with the epic's own `budget_usd` if it has one. Archived items are
+not loaded, so archived spend is not in any roll-up yet.
+
+**Validation.** The checks run in the board, the validator and CI, with these
+codes:
+
+| Code | Severity | Raised when |
+| --- | --- | --- |
+| `invalid-usage` | error | `agent` is not a mapping, `runs` not a list, a run not a mapping or missing `date`/`handle`/`model`, a malformed date, or a negative or non-numeric token, cost or budget |
+| `unpriced-model` | warning | the model is absent from a non-empty `pricing` |
+| `over-budget` | warning | the item's cost exceeds its resolved budget |
+| `unknown-handle` | warning | a run's `handle` is not in `users.yaml` |
+| `missing-usage` | warning | `require_usage` is on, the assignee is a `kind: agent` user, the status is at or after `require_usage_from`, and there is no `runs` key |
+| `duplicate-run` | warning | two runs share `source`, `session` and `model` |
+| `early-run` | warning | a run is dated before the item's `created` |
+
+**Budgets are a rule for agents, not for CI.** The validator only warns, and
+CI runs without `--strict`, so `over-budget` and `missing-usage` never fail a
+pull request. An agent cannot read its own usage while it runs — the numbers
+exist only in the transcript and are complete when the session ends — so the
+protocol (`SKILL.md` "AI Usage and Budgets") is a gate before and a record
+after. Before: derive spent against the budget, and if it is spent do not
+start; an unattended run opens a draft pull request titled `[over budget] …`,
+leaves the item where it is, and reports. After, on every exit path: append one
+run per model before the pull request merges. Two branches that append to one
+item conflict at the same line; keep both.
 
 The command-line tools ship with STORY-001002: `tools/record-usage.js` appends
 a run — by hand, or from a Claude Code session transcript including its
 subagents — with a line-level edit that leaves every other line of the file
-untouched, and `tools/usage-report.js` prints totals by status, assignee,
-model, type, label or epic, or one item's spent, budget and remaining. The
+untouched (re-serializing would drop quotes, comments and flow style and
+cause merge conflicts), and `tools/usage-report.js` prints totals by status,
+assignee, model, type, label or epic, or one item's spent, budget and
+remaining. A transcript is read once per distinct `message.id` — one API
+response is logged as several rows with the same usage block, so summing rows
+over-reports several-fold — and a session's `subagents/` files are included,
+because the implementing model is often a subagent. Transcripts are pruned
+after a retention period, so record soon. The
 board already shows the cost chip on cards (leave `cost` out of
 `settings.card_fields` in `board.yaml` to hide it); the editor section and the
 sidebar totals ship with STORY-001003. `.workspec-demo/` carries an `ai.yaml`

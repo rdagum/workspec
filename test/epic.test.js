@@ -1,6 +1,6 @@
 // test/epic.test.js — epic membership (core/model.js) and the epic focus
 // filter, list and outside-blocker selector in state/store.js
-// (docs/DESIGN-2026-09-epic-focus.md), driven against hand-built models.
+// (README "Epic focus"), driven against hand-built models.
 
 'use strict';
 

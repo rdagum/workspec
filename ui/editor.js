@@ -162,8 +162,8 @@ class EditorView {
           },
           text: this.rawMode ? 'Form view' : 'Raw YAML',
         }),
-        // An EPIC can focus the board on itself (docs/DESIGN-2026-09-epic-focus.md
-        // §1.8). Keyed on the saved record: the focus needs it to be an EPIC on disk.
+        // An EPIC can focus the board on itself (README "Epic focus").
+        // Keyed on the saved record: the focus needs it to be an EPIC on disk.
         isEpic(record)
           ? el('button', {
               class: 'btn-toggle',

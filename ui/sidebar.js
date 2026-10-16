@@ -47,7 +47,7 @@ class SidebarView {
       el('div', { class: 'sidebar-section' }, [el('label', { class: 'sb-label', text: 'Search' }), search])
     );
 
-    // Epics (docs/DESIGN-2026-09-epic-focus.md): focus the board on one epic
+    // Epics (README "Epic focus"): focus the board on one epic
     const epics = this._epicSection();
     if (epics) this.root.append(epics);
 

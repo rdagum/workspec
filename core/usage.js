@@ -1,5 +1,5 @@
 // core/usage.js
-// AI usage and budgets (SPEC.md §18.2; design: docs/DESIGN-2026-09-ai-usage.md).
+// AI usage and budgets (SPEC.md §18.2, README "Tracking AI usage").
 //
 // Reads `agent.runs` and `agent.budget_usd` from an item, prices runs from the
 // optional config/ai.yaml, and derives an item's cost and budget state. Pure —
