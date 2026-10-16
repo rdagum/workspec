@@ -8,12 +8,55 @@
 const { el, clear, NO_EPIC } = WS;
 const { runsOf, formatUsd, formatTokens, USAGE_PERIODS } = WS;
 
+// Which collapsible sections the viewer has closed, persisted across reloads.
+const COLLAPSED_KEY = 'workspec.sidebar.collapsed';
+function loadCollapsed() {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLLAPSED_KEY));
+    return new Set(Array.isArray(v) ? v : []);
+  } catch {
+    return new Set(); // localStorage unavailable — every section starts open
+  }
+}
+function saveCollapsed(set) {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set]));
+  } catch {
+    /* ignore — the choice just won't persist */
+  }
+}
+
 class SidebarView {
   constructor(store, { onNewItem, onOpenContext } = {}) {
     this.store = store;
     this.onNewItem = onNewItem || (() => {});
     this.onOpenContext = onOpenContext || ((path) => this.store.openContext(path));
     this.root = el('aside', { class: 'sidebar', id: 'sidebar' });
+    this.collapsed = loadCollapsed();
+  }
+
+  /**
+   * A sidebar section the viewer can fold away. The sidebar re-renders on
+   * every store change, so the open state lives on the view, not the DOM.
+   * `hint` is shown beside the label only while the section is closed, so a
+   * folded section still says what it is doing to the board.
+   */
+  _collapsible(id, label, children, { className = '', hint = '' } = {}) {
+    const open = !this.collapsed.has(id);
+    const details = el('details', { class: `sidebar-section collapsible ${className}`.trim(), open }, [
+      el('summary', { class: 'sb-label sb-summary' }, [
+        el('span', { text: label }),
+        hint ? el('span', { class: 'sb-hint', text: hint }) : null,
+      ]),
+      ...children,
+    ]);
+    details.addEventListener('toggle', () => {
+      if (details.open === !this.collapsed.has(id)) return;
+      if (details.open) this.collapsed.delete(id);
+      else this.collapsed.add(id);
+      saveCollapsed(this.collapsed);
+    });
+    return details;
   }
 
   render() {
@@ -53,8 +96,8 @@ class SidebarView {
     if (epics) this.root.append(epics);
 
     // Filters
-    const filters = el('div', { class: 'sidebar-section' }, [
-      el('label', { class: 'sb-label', text: 'Filter' }),
+    const filtered = ['type', 'status', 'priority', 'assignee', 'label'].some((k) => f[k]);
+    const filters = this._collapsible('filter', 'Filter', [
       this._select('type', 'Type', facets.type, f.type),
       this._select('status', 'Status', facets.status, f.status),
       this._select('priority', 'Priority', facets.priority, f.priority),
@@ -66,7 +109,7 @@ class SidebarView {
         text: 'Clear filters',
       }),
       el('div', { class: 'filter-count', text: `${shown} of ${total} shown` }),
-    ]);
+    ], { hint: filtered ? `${shown} of ${total}` : '' });
     this.root.append(filters);
 
     // AI usage totals of the filtered items
@@ -162,11 +205,9 @@ class SidebarView {
       el('span', { text: hiddenDone && !store.state.showDoneEpics ? `Show done (${hiddenDone})` : 'Show done' }),
     ]);
 
-    return el('div', { class: 'sidebar-section' }, [
-      el('label', { class: 'sb-label', text: 'Epics' }),
-      list,
-      showDone,
-    ]);
+    return this._collapsible('epics', 'Epics', [list, showDone], {
+      hint: focused ? (focused === NO_EPIC ? 'No epic' : String(focused)) : '',
+    });
   }
 
   /**
@@ -204,8 +245,7 @@ class SidebarView {
       ]);
     };
 
-    return el('div', { class: 'sidebar-section sidebar-usage' }, [
-      el('label', { class: 'sb-label', text: 'AI usage' }),
+    return this._collapsible('usage', 'AI usage', [
       period,
       totals.runs === 0
         ? el('div', { class: 'filter-count', text: 'No runs in this period.' })
@@ -215,7 +255,7 @@ class SidebarView {
           ]),
       totals.runs ? list('By column', totals.byStatus, store.model.workflow) : null,
       totals.runs ? list('By handle', totals.byHandle) : null,
-    ]);
+    ], { className: 'sidebar-usage', hint: totals.runs ? money(totals) : '' });
   }
 
   _sortSection() {

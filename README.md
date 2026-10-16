@@ -351,6 +351,10 @@ defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
   own ID block when the repository allocates in blocks (see below).
 - **Search & filter** — by id/title text, and by type, status, priority
   (most urgent first), assignee, label.
+- **Collapsible sidebar sections** — click the **Epics**, **Filter** or **AI
+  usage** heading to fold it away; the browser remembers which are folded. A
+  folded heading still shows what the section is doing: the focused epic, the
+  shown count while a filter is set, or the usage total.
 - **Epic focus** — the sidebar's **Epics** list shows every item with
   `type: EPIC` and its progress (items done / items in the epic). Click one to
   see only that epic and everything that reaches it through `parent` —
