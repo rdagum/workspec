@@ -14,6 +14,7 @@
 const { buildColumns, distinctValues, sortItems, PRIORITY_RANK } = WS;
 const { isEpic, epicIndex, epicProgress, doneColumn, idList } = WS;
 const { serializeItem, changeStatus, validateItem } = WS;
+const { summarize, periodRange } = WS;
 const { knownIds, lowestFreeBlock, appendBlockEntry, setLocalKeys, REGISTRY_PATH, LOCAL_PATH } = WS;
 
 const emptyFilters = () => ({ text: '', type: '', status: '', priority: '', assignee: '', label: '', epic: '' });
@@ -34,6 +35,7 @@ class Store {
       dirty: false, // unsaved edits in the open editor
       status: 'idle', // idle | loading | ready | error
       message: '',
+      usagePeriod: 'all', // sidebar AI usage period: all | 7d | 30d | month
       showDoneEpics: false, // sidebar Epics list: include epics in the last column
       recent: [], // remembered repositories, newest first (core/recent.js)
       autoReopen: false, // "reopen the last repository on load" preference
@@ -238,6 +240,23 @@ class Store {
   /** Focus the board on an epic (or NO_EPIC); focusing the focused one again clears it. */
   toggleEpicFocus(id) {
     this.setFilter('epic', this.state.filters.epic === id ? '' : id);
+  }
+
+  setUsagePeriod(period) {
+    this.set({ usagePeriod: ['all', '7d', '30d', 'month'].includes(period) ? period : 'all' });
+  }
+
+  /**
+   * AI usage totals (core/usage.js summarize) of the filtered items, limited
+   * to runs dated inside the selected period. `today` is injectable for tests.
+   */
+  usageTotals(today = new Date()) {
+    return summarize(this.model, this.filteredItems(), periodRange(this.state.usagePeriod, today));
+  }
+
+  /** Cost totals of one column's cards, for its header subtotal (all run dates). */
+  columnUsage(records) {
+    return summarize(this.model, records);
   }
 
   setShowDoneEpics(on) {

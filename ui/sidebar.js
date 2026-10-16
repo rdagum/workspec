@@ -6,6 +6,7 @@
 'use strict';
 
 const { el, clear, NO_EPIC } = WS;
+const { runsOf, formatUsd, formatTokens, USAGE_PERIODS } = WS;
 
 class SidebarView {
   constructor(store, { onNewItem, onOpenContext } = {}) {
@@ -67,6 +68,10 @@ class SidebarView {
       el('div', { class: 'filter-count', text: `${shown} of ${total} shown` }),
     ]);
     this.root.append(filters);
+
+    // AI usage totals of the filtered items
+    const usage = this._usageSection();
+    if (usage) this.root.append(usage);
 
     // Sort (fields configured in board.yaml)
     const sortSection = this._sortSection();
@@ -161,6 +166,55 @@ class SidebarView {
       el('label', { class: 'sb-label', text: 'Epics' }),
       list,
       showDone,
+    ]);
+  }
+
+  /**
+   * Total cost and tokens of the filtered items' runs, by column and by
+   * handle, limited to a period by run date. All numbers come from
+   * store.usageTotals() (core/usage.js summarize); this only formats them.
+   * Omitted when no item in the repository carries runs.
+   */
+  _usageSection() {
+    const store = this.store;
+    if (!store.allItems().some((r) => runsOf(r.meta))) return null;
+    const totals = store.usageTotals();
+
+    const period = el('select', { class: 'filter-select', 'aria-label': 'Usage period' });
+    for (const [value, label] of USAGE_PERIODS) {
+      period.append(el('option', { value, selected: store.state.usagePeriod === value }, label));
+    }
+    period.value = store.state.usagePeriod;
+    period.addEventListener('change', () => store.setUsagePeriod(period.value));
+
+    const money = (t) => (t.priced ? formatUsd(t.cost) : `≥ ${formatUsd(t.knownCost)}`);
+    const row = (label, t) =>
+      el('li', { class: 'usage-row', title: `${t.runs} run${t.runs === 1 ? '' : 's'}` + (t.priced ? '' : `; ${t.unpricedRuns} unpriced`) }, [
+        el('span', { class: 'usage-row-label', text: label || '(none)' }),
+        el('span', { class: 'usage-row-tokens', text: `${formatTokens(t.totalTokens)} tok` }),
+        el('span', { class: 'usage-row-cost', text: money(t) }),
+      ]);
+    const list = (title, map, order) => {
+      const keys = Object.keys(map).filter((k) => map[k].runs > 0);
+      if (!keys.length) return null;
+      if (order) keys.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      return el('div', {}, [
+        el('div', { class: 'usage-sub', text: title }),
+        el('ul', { class: 'usage-list' }, keys.map((k) => row(k, map[k]))),
+      ]);
+    };
+
+    return el('div', { class: 'sidebar-section sidebar-usage' }, [
+      el('label', { class: 'sb-label', text: 'AI usage' }),
+      period,
+      totals.runs === 0
+        ? el('div', { class: 'filter-count', text: 'No runs in this period.' })
+        : el('div', { class: 'usage-total' }, [
+            el('strong', { text: money(totals) }),
+            el('span', { class: 'usage-hint', text: ` · ${formatTokens(totals.totalTokens)} tok · ${totals.runs} run${totals.runs === 1 ? '' : 's'}` }),
+          ]),
+      totals.runs ? list('By column', totals.byStatus, store.model.workflow) : null,
+      totals.runs ? list('By handle', totals.byHandle) : null,
     ]);
   }
 
