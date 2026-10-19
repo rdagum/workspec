@@ -34,6 +34,51 @@ function indentOf(line) {
   return line.length - line.trimStart().length;
 }
 
+/**
+ * Index just past the quoted string that opens at s[i] (`"` with backslash
+ * escapes, `'` with doubled quotes), or -1 when it is never closed.
+ */
+function skipQuoted(s, i) {
+  const q = s[i];
+  for (let j = i + 1; j < s.length; j++) {
+    if (q === '"' && s[j] === '\\') {
+      j++;
+    } else if (s[j] === q) {
+      if (q === "'" && s[j + 1] === "'") j++;
+      else return j + 1;
+    }
+  }
+  return -1;
+}
+
+// A quote only opens a quoted scalar at the start of a token; inside plain
+// text ("it's", 6'2") it is an ordinary character.
+function isQuoteStart(s, i) {
+  return (s[i] === '"' || s[i] === "'") && (i === 0 || /[\s[{,:]/.test(s[i - 1]));
+}
+
+/** True when the whole of `s` is one quoted scalar. */
+function isQuoted(s) {
+  return s.length >= 2 && isQuoteStart(s, 0) && skipQuoted(s, 0) === s.length;
+}
+
+/**
+ * Drop an unquoted trailing comment: a `#` at the start or after whitespace,
+ * outside any quoted token. `a#b` and `"x # y"` keep their `#`.
+ */
+function stripComment(s) {
+  for (let i = 0; i < s.length; i++) {
+    if (isQuoteStart(s, i)) {
+      const end = skipQuoted(s, i);
+      if (end === -1) return s; // unterminated: leave it to the scalar rules
+      i = end - 1;
+    } else if (s[i] === '#' && (i === 0 || /\s/.test(s[i - 1]))) {
+      return s.slice(0, i).trimEnd();
+    }
+  }
+  return s;
+}
+
 function parseScalar(raw) {
   const s = raw.trim();
   if (s === '' || s === '~' || s === 'null') return null;
@@ -41,10 +86,10 @@ function parseScalar(raw) {
   if (s === 'false') return false;
 
   // Quoted strings — strip the quotes, keep the literal contents.
-  if (s.length >= 2 && s[0] === '"' && s[s.length - 1] === '"') {
+  if (isQuoted(s) && s[0] === '"') {
     return s.slice(1, -1).replace(/\\"/g, '"').replace(/\\n/g, '\n');
   }
-  if (s.length >= 2 && s[0] === "'" && s[s.length - 1] === "'") {
+  if (isQuoted(s) && s[0] === "'") {
     return s.slice(1, -1).replace(/''/g, "'");
   }
 
@@ -57,14 +102,16 @@ function parseScalar(raw) {
 
   // Inline flow mapping: {}, { block: 1, owner: rdagum }. The ID block registry
   // uses this form so one clone is one line. Anything that does not split
-  // cleanly into "key: value" pairs is kept as the literal string it was.
+  // cleanly into "key: value" pairs is an error: turning it into a string
+  // would silently change a mapping into text on the next save.
   if (s[0] === '{' && s[s.length - 1] === '}') {
     const inner = s.slice(1, -1).trim();
     if (inner === '') return {};
     const obj = {};
     for (const part of splitFlow(inner)) {
       const kv = splitKeyValue(part);
-      if (!kv || kv.key === '') return s;
+      if (!kv || kv.key === '') throw new Error(`flow mapping entry is not a "key: value" pair (${part || 'empty'})`);
+      if (Object.prototype.hasOwnProperty.call(obj, kv.key)) throw new Error(`duplicate key "${kv.key}" in flow mapping`);
       obj[kv.key] = parseScalar(kv.rest);
     }
     return obj;
@@ -82,15 +129,13 @@ function parseScalar(raw) {
 function splitFlow(inner) {
   const out = [];
   let buf = '';
-  let quote = null;
   let depth = 0;
-  for (const ch of inner) {
-    if (quote) {
-      if (ch === quote) quote = null;
-      buf += ch;
-    } else if (ch === '"' || ch === "'") {
-      quote = ch;
-      buf += ch;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    const end = isQuoteStart(inner, i) ? skipQuoted(inner, i) : -1;
+    if (end !== -1) {
+      buf += inner.slice(i, end);
+      i = end - 1;
     } else if (ch === '{' || ch === '[') {
       depth++;
       buf += ch;
@@ -110,18 +155,10 @@ function splitFlow(inner) {
 
 // Split "key: value" honouring quoted keys/values and the block-scalar markers.
 function splitKeyValue(content) {
-  // Find the first ": " or trailing ":" that is not inside quotes.
-  let quote = null;
-  for (let i = 0; i < content.length; i++) {
+  // Find the first ": " or trailing ":" that is not inside a quoted key.
+  const keyEnd = isQuoteStart(content, 0) ? skipQuoted(content, 0) : 0;
+  for (let i = Math.max(keyEnd, 0); i < content.length; i++) {
     const ch = content[i];
-    if (quote) {
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
     if (ch === ':') {
       const after = content.slice(i + 1);
       if (after === '' || after[0] === ' ') {
@@ -135,12 +172,11 @@ function splitKeyValue(content) {
 // Net bracket depth of a flow collection's text, ignoring quoted brackets.
 function flowDepth(s) {
   let depth = 0;
-  let quote = null;
-  for (const ch of s) {
-    if (quote) {
-      if (ch === quote) quote = null;
-    } else if (ch === '"' || ch === "'") {
-      quote = ch;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    const end = isQuoteStart(s, i) ? skipQuoted(s, i) : -1;
+    if (end !== -1) {
+      i = end - 1;
     } else if (ch === '{' || ch === '[') {
       depth++;
     } else if (ch === '}' || ch === ']') {
@@ -177,6 +213,15 @@ function parseYaml(text, options = {}) {
     return err;
   }
 
+  // parseScalar knows no line numbers; attach the line the value started on.
+  function scalarAt(i, raw) {
+    try {
+      return parseScalar(raw);
+    } catch (err) {
+      throw fail(i, err.message);
+    }
+  }
+
   function significantIndex(from) {
     for (let j = from; j < lines.length; j++) if (!isSkippable(lines[j])) return j;
     return -1;
@@ -202,7 +247,7 @@ function parseYaml(text, options = {}) {
         continue;
       }
       if (indentOf(line) <= keyIndent) break;
-      joined += ' ' + line.trim();
+      joined += ' ' + stripComment(line.trim());
       idx++;
       if (flowDepth(joined) <= 0) return joined;
     }
@@ -253,7 +298,7 @@ function parseYaml(text, options = {}) {
       if (ci > seqIndent) throw fail(idx, 'unexpected indentation inside a sequence');
       const content = line.slice(ci);
       if (!isDash(content)) break; // the parent's next key, checked by the parent
-      const itemBody = content.slice(1).trim();
+      const itemBody = stripComment(content.slice(1).trim());
       idx++;
       if (itemBody === '') {
         // Nested structure under the dash.
@@ -273,7 +318,7 @@ function parseYaml(text, options = {}) {
         lines[idx] = ' '.repeat(mapIndent) + itemBody;
         arr.push(parseMapping(mapIndent));
       } else {
-        arr.push(parseScalar(itemBody));
+        arr.push(scalarAt(idx - 1, /^[[{]/.test(itemBody) ? readFlow(itemBody, ci) : itemBody));
       }
     }
     return arr;
@@ -297,7 +342,8 @@ function parseYaml(text, options = {}) {
       if (isDash(content)) throw fail(idx, 'sequence entry where a "key: value" pair was expected');
       const kv = splitKeyValue(content);
       if (!kv || kv.key === '') throw fail(idx, 'expected a "key: value" pair');
-      const { key, rest } = kv;
+      const key = kv.key;
+      const rest = stripComment(kv.rest);
       if (Object.prototype.hasOwnProperty.call(firstLine, key)) {
         throw fail(idx, `duplicate key "${key}" (first set on line ${firstLine[key] + 1 + offset})`);
       }
@@ -309,7 +355,7 @@ function parseYaml(text, options = {}) {
         continue;
       }
       if (rest !== '') {
-        obj[key] = parseScalar(/^[[{]/.test(rest) ? readFlow(rest, ci) : rest);
+        obj[key] = scalarAt(idx - 1, /^[[{]/.test(rest) ? readFlow(rest, ci) : rest);
         continue;
       }
       // Empty value -> nested mapping, sequence, flow collection, or null.
@@ -319,11 +365,11 @@ function parseYaml(text, options = {}) {
         continue;
       }
       const ni = indentOf(nxt);
-      const ncontent = nxt.slice(ni);
+      const ncontent = stripComment(nxt.slice(ni));
       if (ni > ci && /^[[{]/.test(ncontent)) {
         while (lines[idx] !== nxt) idx++;
         idx++;
-        obj[key] = parseScalar(readFlow(ncontent, ci));
+        obj[key] = scalarAt(idx - 1, readFlow(ncontent, ci));
       } else if (ni >= ci && isDash(ncontent)) {
         // ni === ci is an "indentless" sequence (`key:\n- a`), as PyYAML writes it.
         obj[key] = parseSequence(ni);

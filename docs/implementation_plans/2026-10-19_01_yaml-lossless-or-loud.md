@@ -5,7 +5,7 @@ Gates (this repo, per CLAUDE.md): `node --test`, `node tools/validate-workspec.j
 Every step ships its own fixture/test. No new dependencies; browser code path unchanged.
 
 - [x] 1. Strict parse: `parseMapping` throws (with a 1-based line number) on a line indented deeper than its mapping and on a non key/value line. Tests in `test/yaml.test.js`; confirm `parseItem` lands the error in `record.errors`; fixtures that must be rejected live in tests (strings), not in `fixtures/items` (which must parse cleanly).
-- [ ] 2. Unquoted trailing ` # comment` stripped from scalars (quotes respected, `#` without leading space kept). Flow mappings already parse (keep), unparseable `{...}` throws instead of becoming a string.
+- [x] 2. Unquoted trailing ` # comment` stripped from scalars (quotes respected, `#` without leading space kept). Flow mappings already parse (keep), unparseable `{...}` throws instead of becoming a string.
 - [ ] 3. Symmetric scalar escaping: `parseScalar` unescapes `\\ \" \n \t`; `serializeScalar` escapes `\ " \n \t`. Fixture `quoted.md` extended with backslash/tab cases; round-trip tests.
 - [ ] 4. Multi-line strings without trailing newline serialize as `|-`; with trailing newline stay `|`. Fixture + round-trip test.
 - [ ] 5. `patchScalarLine` anchors the key at column 0 (nested `agent.status` never patched). Test.

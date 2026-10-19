@@ -24,6 +24,15 @@ custom:
   nested:
     # A comment two levels deep
     deeper: true
+  trailing: value # a trailing comment is stripped from the value
+  quoted_trailing: "yes" # after a quoted value
+  quoted_hash: "a # b"
+  hash_kept: issue#42
+  tags:
+    - alpha # on a sequence item
+    - beta
+  note: | # on a block scalar header
+    block text # inside a block this is content
 # A trailing comment before the closing fence
 ---
 

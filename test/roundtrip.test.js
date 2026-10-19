@@ -85,6 +85,23 @@ describe('fixtures: corpus', () => {
   });
 });
 
+describe('fixtures: values the round trip alone cannot pin down', () => {
+  const parsed = (name) => {
+    const { raw } = fixtures.find((f) => f.name === name);
+    return parseItem(fixturePath(raw), raw).meta;
+  };
+
+  it('comments.md: trailing comments are stripped from values; a # inside a block is content', () => {
+    const { custom } = parsed('comments.md');
+    assert.equal(custom.trailing, 'value');
+    assert.equal(custom.quoted_trailing, 'yes');
+    assert.equal(custom.quoted_hash, 'a # b');
+    assert.equal(custom.hash_kept, 'issue#42');
+    assert.deepEqual(custom.tags, ['alpha', 'beta']);
+    assert.equal(custom.note, 'block text # inside a block this is content\n');
+  });
+});
+
 describe('fixtures: round trip through parseItem / serializeItem', () => {
   for (const { name, raw } of fixtures) {
     it(name, () => {

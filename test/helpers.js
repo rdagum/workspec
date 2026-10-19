@@ -31,9 +31,10 @@ function readFixtures() {
  * Two documents are "content-equal" when they are identical after:
  *   - dropping a leading UTF-8 BOM,
  *   - normalising CRLF to LF,
- *   - dropping standalone `# comment` lines inside the front matter (the
- *     engine does not preserve them across a metadata re-serialize; see the
- *     README "Notes & limits"),
+ *   - dropping standalone `# comment` lines inside the front matter, and
+ *     unquoted trailing ` # comments` on front-matter lines (the engine does
+ *     not preserve either across a metadata re-serialize; see the README
+ *     "Notes & limits"),
  *   - trimming trailing spaces/tabs on each line (the serializer emits
  *     `key: ` with a trailing space for null values),
  *   - collapsing trailing newlines at the end of the file to exactly one.
@@ -46,6 +47,7 @@ function normalizeDocument(text) {
     const frontMatter = m[1]
       .split('\n')
       .filter((line) => !/^\s*#/.test(line))
+      .map(stripTrailingComment)
       .join('\n');
     t = `---\n${frontMatter}\n---\n${m[2]}`;
   }
@@ -56,6 +58,33 @@ function normalizeDocument(text) {
       .join('\n')
       .replace(/\n+$/, '') + '\n'
   );
+}
+
+/**
+ * Cut a line at an unquoted ` #`. Deliberately independent of utils/yaml.js
+ * (same rule: a quote opens a quoted token only at the start of a token), so
+ * the round-trip assertion does not trust the engine under test.
+ */
+function stripTrailingComment(line) {
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if ((ch === '"' || ch === "'") && (i === 0 || /[\s[{,:]/.test(line[i - 1]))) {
+      let j = i + 1;
+      for (; j < line.length; j++) {
+        if (ch === '"' && line[j] === '\\') {
+          j++;
+        } else if (line[j] === ch) {
+          if (ch === "'" && line[j + 1] === "'") j++;
+          else break;
+        }
+      }
+      if (j >= line.length) return line; // unterminated quote: leave the line alone
+      i = j;
+    } else if (ch === '#' && i > 0 && /\s/.test(line[i - 1])) {
+      return line.slice(0, i).replace(/[ \t]+$/, '');
+    }
+  }
+  return line;
 }
 
 /** Rewrite a document with Windows line endings (LF and lone CR become CRLF). */

@@ -72,6 +72,54 @@ describe('yaml: parseYaml scalars', () => {
     });
   });
 
+  it('strips an unquoted trailing comment from a value', () => {
+    // REVIEW-2026-09 §4 finding 5: this used to read as "high # urgent".
+    assert.deepEqual(parseYaml('priority: high # urgent\nestimate: 3   # points\nassignee: # nobody yet'), {
+      priority: 'high', estimate: 3, assignee: null,
+    });
+    assert.deepEqual(parseYaml("a: \"quoted\" # c\nb: 'it''s' # c\nc: it's # c\nd: say \"hi\" # c"), {
+      a: 'quoted', b: "it's", c: "it's", d: 'say "hi"',
+    });
+  });
+
+  it('keeps a # that is quoted or not preceded by whitespace', () => {
+    assert.deepEqual(parseYaml('a: "x # y"\nb: \'x # y\'\nc: a#b\nd: issue#42\ne: "x" # "y # z"'), {
+      a: 'x # y', b: 'x # y', c: 'a#b', d: 'issue#42', e: 'x',
+    });
+  });
+
+  it('strips trailing comments from sequence items, flow collections and block headers', () => {
+    const text = [
+      'labels:',
+      '  - one # first',
+      '  - "two # kept"',
+      '  - # empty item',
+      'flow: [a, "b # kept", c] # trailing',
+      'map: { k: v } # trailing',
+      'wrapped: [p, # inside',
+      '  q]',
+      'block: | # header comment',
+      '  text # not a comment inside a block',
+      'custom: # namespace',
+      '  k: v',
+    ].join('\n');
+    assert.deepEqual(parseYaml(text), {
+      labels: ['one', 'two # kept', null],
+      flow: ['a', 'b # kept', 'c'],
+      map: { k: 'v' },
+      wrapped: ['p', 'q'],
+      block: 'text # not a comment inside a block\n',
+      custom: { k: 'v' },
+    });
+  });
+
+  it('reads a quote inside a value as text unless it opens the value', () => {
+    // A value that starts quoted but continues after the closing quote is plain text.
+    assert.deepEqual(parseYaml('a: "[" and "]" move\nb: don\'t: stop\nc: [it\'s, ok]'), {
+      a: '"[" and "]" move', b: "don't: stop", c: ["it's", 'ok'],
+    });
+  });
+
   it('reads flow sequences, including quoted items with commas', () => {
     assert.deepEqual(parseYaml('a: []\nb: [ ]\nc: [x]\nd: [x, y, z]\ne: [1, true, ~]\nf: ["a, b", \'c, d\', e]'), {
       a: [], b: [], c: ['x'], d: ['x', 'y', 'z'], e: [1, true, null], f: ['a, b', 'c, d', 'e'],
@@ -532,9 +580,24 @@ describe('yaml: flow mappings', () => {
     assertStable({ a: {}, b: [{}] });
   });
 
-  it('keeps braces that are not a mapping as a literal string', () => {
-    assert.deepEqual(parseYaml('a: {not a mapping}'), { a: '{not a mapping}' });
+  it('rejects braces that are not a mapping instead of turning them into a string', () => {
+    // REVIEW-2026-09 §4 finding 5: a mapping must never silently become text.
+    assert.throws(() => parseYaml('a: 1\nb: {not a mapping}'), /^Error: line 2: flow mapping entry is not a "key: value" pair/);
+    assert.throws(() => parseYaml('a: { x: 1, x: 2 }'), /line 1: duplicate key "x" in flow mapping/);
+    assert.throws(() => parseYaml('a: [x, { bad }]'), /line 1: flow mapping entry/);
+    assert.throws(() => parseYaml('s:\n  - { ok: 1 }\n  - { nope }'), /line 3: flow mapping entry/);
+    assert.throws(() => parseYaml('a:\n  {\n    x: 1,\n    y\n  }'), /line 2: flow mapping entry/); // where the flow starts
+    // Quoted braces are text.
     assert.deepEqual(parseYaml('a: "{ quoted: text }"'), { a: '{ quoted: text }' });
+  });
+
+  it('parses nested flow mappings and sequences', () => {
+    assert.deepEqual(parseYaml('a: { b: { c: 1 }, d: [x, { e: 2 }] }'), { a: { b: { c: 1 }, d: ['x', { e: 2 }] } });
+    assertStable(parseYaml('a: { b: { c: 1 } }'));
+  });
+
+  it('reads a multi-line flow collection that is a sequence item', () => {
+    assert.deepEqual(parseYaml('s:\n  - { a: 1,\n      b: 2 }\n  - c'), { s: [{ a: 1, b: 2 }, 'c'] });
   });
 
   it('reads a flow mapping wrapped onto the line below its key', () => {
