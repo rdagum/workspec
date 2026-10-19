@@ -112,6 +112,14 @@ describe('parser: parseItem', () => {
     }
   });
 
+  it('re-validating an unparseable record adds no "missing field" noise', () => {
+    const raw = '---\nid: EPIC-000001\ntype: EPIC\ndepends_on: []\ntitle: t\ndepends_on: []\n---\n';
+    const rec = parseItem('items/EPIC-000001.md', raw);
+    validateItem(rec, ['Backlog', 'Done']);
+    assert.equal(rec.errors.length, 1, rec.errors.join('; '));
+    assert.match(rec.errors[0], /duplicate key "depends_on"/);
+  });
+
   it('lands a strict YAML parse error in record.errors, naming the file line', () => {
     // Front-matter line 3 is file line 4 (line 1 is the opening fence).
     const raw = '---\nid: STORY-000042\ntype: STORY\n   oops: 1\ntitle: t\nstatus: Ready\n---\n\nbody\n';
