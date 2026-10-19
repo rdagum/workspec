@@ -25,6 +25,13 @@ custom:
     Nested under a namespace
     two lines deep
   after: value that follows a nested block
+  stripped_nested: |-
+    Nested strip block
+    without a final newline
+stripped: |-
+  Strip chomping: no trailing newline
+
+  even after a blank line
 trailing: last key after the block scalars
 ---
 

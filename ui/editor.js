@@ -19,7 +19,7 @@
 'use strict';
 
 const { el, clear, renderMarkdown } = WS;
-const { stringifyYaml, parseYaml } = WS;
+const { stringifyYaml, parseYaml, splitDocument } = WS;
 const { validateItem, REQUIRED_FIELDS } = WS;
 const { detailDisplay, isEpic } = WS;
 const { itemUsage, runsOf, runCost, runTokens, resolveBudget, usageIssues, formatUsd, formatTokens, TOKEN_KINDS } = WS;
@@ -29,6 +29,8 @@ const PRIORITIES = ['critical', 'high', 'medium', 'low'];
 // Fields the form shows but does not let the user hand-edit. `id` is immutable
 // (SPEC.md §7.2); `created`/`updated` are managed automatically.
 const READONLY_FIELDS = new Set(['id', 'created', 'updated']);
+
+const LOSSY_NOTE = 'Raw YAML only: this front matter uses YAML the form would rewrite differently, so it is saved exactly as typed.';
 
 // Sticky editor view preferences, persisted across page reloads.
 const PREFS_KEY = 'workspec.editor.prefs';
@@ -98,7 +100,21 @@ class EditorView {
       this._rawText = null; // per-item raw buffer; rebuild from the new meta
       this._rawError = null;
       this._dirty = false;
+      // A lossy record (core/parser.js round-trip guard) is edited as its own
+      // front-matter text, never as a form re-serialized from `meta`, and the
+      // store saves that text verbatim.
+      this._lossy = !!record.lossy;
+      this._rawEdited = false;
+      if (this._lossy) {
+        const { frontMatter } = splitDocument(record.raw || '');
+        this._rawText = frontMatter == null ? '' : frontMatter;
+      }
     }
+  }
+
+  /** Raw YAML is the only metadata view of a lossy record. */
+  _showRaw() {
+    return this.rawMode || this._lossy;
   }
 
   render() {
@@ -176,23 +192,7 @@ class EditorView {
         }),
       ]),
       el('div', { class: 'editor-actions' }, [
-        el('button', {
-          class: 'btn-toggle',
-          onclick: () => {
-            if (!this.rawMode) {
-              this._rawText = stringifyYaml(this.meta);
-            } else {
-              // Leaving raw mode — try to adopt edits.
-              if (!this._commitRaw()) return;
-            }
-            this.rawMode = !this.rawMode;
-            // Raw YAML lives on the Metadata tab; from the AI usage tab, go there.
-            if (this.tab === 'usage') this.tab = 'meta';
-            this._savePrefs();
-            this.render();
-          },
-          text: this.rawMode ? 'Form view' : 'Raw YAML',
-        }),
+        this._rawToggle(),
         // An EPIC can focus the board on itself (README "Epic focus").
         // Keyed on the saved record: the focus needs it to be an EPIC on disk.
         isEpic(record)
@@ -209,9 +209,47 @@ class EditorView {
     ]);
   }
 
+  /** Form/raw switch; a lossy record has no form view, so it shows a disabled marker instead. */
+  _rawToggle() {
+    if (this._lossy) {
+      return el('button', {
+        class: 'btn-toggle',
+        disabled: true,
+        title: 'This front matter uses YAML the form would rewrite differently, so it is edited and saved as raw text.',
+        text: 'Raw YAML only',
+      });
+    }
+    return el('button', {
+      class: 'btn-toggle',
+      onclick: () => {
+        if (!this.rawMode) {
+          this._rawText = stringifyYaml(this.meta);
+        } else {
+          // Leaving raw mode — try to adopt edits.
+          if (!this._commitRaw()) return;
+        }
+        this.rawMode = !this.rawMode;
+        // Raw YAML lives on the Metadata tab; from the AI usage tab, go there.
+        if (this.tab === 'usage') this.tab = 'meta';
+        this._savePrefs();
+        this.render();
+      },
+      text: this.rawMode ? 'Form view' : 'Raw YAML',
+    });
+  }
+
   _validation() {
     const record = { meta: this.meta, fileName: this._path.split('/').pop(), errors: [], warnings: [] };
-    validateItem(record, this.store.model.workflow);
+    const stored = this.store.selectedItem();
+    if (this._lossy && !this._rawEdited && stored) {
+      // Until the raw text is edited, `meta` may be empty (the file did not
+      // parse); show what loading the file reported instead.
+      record.errors = [...(stored.errors || [])];
+      record.warnings = [...(stored.warnings || [])];
+    } else {
+      validateItem(record, this.store.model.workflow);
+      if (this._lossy) record.warnings.unshift(LOSSY_NOTE);
+    }
     if (this._rawError) record.errors.unshift(`YAML: ${this._rawError}`);
     if (!record.errors.length && !record.warnings.length) return el('div', { class: 'validation ok', text: '' });
     const box = el('div', { class: 'validation ' + (record.errors.length ? 'has-error' : 'has-warn') });
@@ -225,7 +263,7 @@ class EditorView {
   _metaPane() {
     const pane = el('div', { class: 'pane pane-meta' });
     pane.append(el('div', { class: 'pane-label', text: 'Metadata' }));
-    pane.append(this.rawMode ? this._rawEditor() : this._form());
+    pane.append(this._showRaw() ? this._rawEditor() : this._form());
     return pane;
   }
 
@@ -235,6 +273,7 @@ class EditorView {
       spellcheck: 'false',
       oninput: (e) => {
         this._rawText = e.target.value;
+        this._rawEdited = true;
         try {
           this.meta = parseYaml(e.target.value) || {};
           this._rawError = null;
@@ -364,7 +403,9 @@ class EditorView {
   _usagePane() {
     const pane = el('div', { class: 'pane pane-usage' });
     const body = el('div', { class: 'usage-pane' });
-    if (this._rawError) {
+    if (this._lossy) {
+      body.append(el('div', { class: 'usage-hint', text: 'This item is edited as raw YAML only; change agent on the Metadata tab.' }));
+    } else if (this._rawError) {
       body.append(el('div', { class: 'usage-hint', text: 'Fix the YAML errors on the Metadata tab first.' }));
     } else if ('agent' in this.meta && !this._usageEditable(this.meta.agent)) {
       body.append(
@@ -687,8 +728,15 @@ class EditorView {
       return;
     }
     try {
-      await this.store.saveItem(this._path, JSON.parse(JSON.stringify(this.meta)), this.body);
+      const raw = this._lossy ? this._rawText : null; // the store writes it verbatim
+      await this.store.saveItem(this._path, JSON.parse(JSON.stringify(this.meta)), this.body, raw);
       this._dirty = false;
+      if (this._lossy) {
+        // The store re-parsed the file (it may no longer be lossy); rebind to it.
+        this._path = null;
+        this.render();
+        return;
+      }
       this._refreshStatus();
     } catch (err) {
       this.store.set({ message: `Save failed: ${err.message}` });

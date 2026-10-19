@@ -60,6 +60,19 @@ describe('yaml: parseYaml scalars', () => {
     });
   });
 
+  it('decodes every double-quoted escape', () => {
+    assert.deepEqual(
+      parseYaml('a: "back\\\\slash"\nb: "tab\\there"\nc: "cr\\r"\nd: "\\x41\\u00e9\\U0001F600"\ne: "\\/\\0\\ "'),
+      { a: 'back\\slash', b: 'tab\there', c: 'cr\r', d: 'A\u00e9\u{1F600}', e: '/\0 ' }
+    );
+  });
+
+  it('keeps an unknown escape literally, so a hand-written "C:\\path" survives', () => {
+    assert.equal(parseYaml('a: "C:\\path"').a, 'C:\\path');
+    const once = stringifyYaml({ a: 'C:\\path: x' });
+    assert.equal(stringifyYaml(parseYaml(once)), once);
+  });
+
   it('keeps quoted values that look like other types as strings', () => {
     assert.deepEqual(parseYaml('a: "true"\nb: "null"\nc: "42"\nd: "~"\ne: "007"\nf: "[]"'), {
       a: 'true', b: 'null', c: '42', d: '~', e: '007', f: '[]',
@@ -69,6 +82,54 @@ describe('yaml: parseYaml scalars', () => {
   it('unwraps single-quoted strings and doubled single quotes', () => {
     assert.deepEqual(parseYaml("a: 'plain'\nb: ''\nc: 'it''s'\nd: 'x: y'\ne: 'back\\slash'"), {
       a: 'plain', b: '', c: "it's", d: 'x: y', e: 'back\\slash',
+    });
+  });
+
+  it('strips an unquoted trailing comment from a value', () => {
+    // REVIEW-2026-09 §4 finding 5: this used to read as "high # urgent".
+    assert.deepEqual(parseYaml('priority: high # urgent\nestimate: 3   # points\nassignee: # nobody yet'), {
+      priority: 'high', estimate: 3, assignee: null,
+    });
+    assert.deepEqual(parseYaml("a: \"quoted\" # c\nb: 'it''s' # c\nc: it's # c\nd: say \"hi\" # c"), {
+      a: 'quoted', b: "it's", c: "it's", d: 'say "hi"',
+    });
+  });
+
+  it('keeps a # that is quoted or not preceded by whitespace', () => {
+    assert.deepEqual(parseYaml('a: "x # y"\nb: \'x # y\'\nc: a#b\nd: issue#42\ne: "x" # "y # z"'), {
+      a: 'x # y', b: 'x # y', c: 'a#b', d: 'issue#42', e: 'x',
+    });
+  });
+
+  it('strips trailing comments from sequence items, flow collections and block headers', () => {
+    const text = [
+      'labels:',
+      '  - one # first',
+      '  - "two # kept"',
+      '  - # empty item',
+      'flow: [a, "b # kept", c] # trailing',
+      'map: { k: v } # trailing',
+      'wrapped: [p, # inside',
+      '  q]',
+      'block: | # header comment',
+      '  text # not a comment inside a block',
+      'custom: # namespace',
+      '  k: v',
+    ].join('\n');
+    assert.deepEqual(parseYaml(text), {
+      labels: ['one', 'two # kept', null],
+      flow: ['a', 'b # kept', 'c'],
+      map: { k: 'v' },
+      wrapped: ['p', 'q'],
+      block: 'text # not a comment inside a block\n',
+      custom: { k: 'v' },
+    });
+  });
+
+  it('reads a quote inside a value as text unless it opens the value', () => {
+    // A value that starts quoted but continues after the closing quote is plain text.
+    assert.deepEqual(parseYaml('a: "[" and "]" move\nb: don\'t: stop\nc: [it\'s, ok]'), {
+      a: '"[" and "]" move', b: "don't: stop", c: ["it's", 'ok'],
     });
   });
 
@@ -159,6 +220,85 @@ describe('yaml: parseYaml structure', () => {
   it('reads a key whose value is on the next line as null when nothing is nested', () => {
     assert.deepEqual(parseYaml('a:\nb: 1'), { a: null, b: 1 });
     assert.deepEqual(parseYaml('a:'), { a: null });
+  });
+});
+
+describe('yaml: parseYaml is strict (lossless-or-loud)', () => {
+  /** Assert that parsing throws and the message names the given 1-based line. */
+  function assertRejects(text, line, pattern, options) {
+    let error = null;
+    try {
+      parseYaml(text, options);
+    } catch (err) {
+      error = err;
+    }
+    assert.ok(error, `should throw: ${JSON.stringify(text)}`);
+    assert.match(error.message, new RegExp(`^line ${line}: `), error.message);
+    assert.equal(error.line, line);
+    if (pattern) assert.match(error.message, pattern);
+    return error;
+  }
+
+  it('throws on a line indented deeper than its mapping instead of dropping the rest', () => {
+    // REVIEW-2026-09 §4 finding 1: this used to parse to { id, type } and lose title/status.
+    const err = assertRejects('id: STORY-000001\ntype: STORY\n   oops: 1\ntitle: t\nstatus: Ready', 3, /unexpected indentation/);
+    assert.match(err.message, /"oops: 1"/, 'the message quotes the offending line');
+    assertRejects('custom:\n  a: 1\n    b: 2\n  c: 3', 3, /unexpected indentation/);
+  });
+
+  it('throws on a line that is not a key/value pair', () => {
+    assertRejects('a: 1\njust some text\nb: 2', 2, /expected a "key: value" pair/);
+    assertRejects('a: 1\n: no key\n', 2, /expected a "key: value" pair/);
+    assertRejects('a: 1\n...\n', 2);
+  });
+
+  it('throws on a sequence entry where a key was expected', () => {
+    assertRejects('a: 1\n- stray\nb: 2', 2, /sequence entry/);
+  });
+
+  it('throws on a duplicate key, naming both lines', () => {
+    assertRejects('a: 1\nb: 2\na: 3', 3, /duplicate key "a" \(first set on line 1\)/);
+    assertRejects('m:\n  k: 1\n  k: 2', 3, /duplicate key "k"/);
+  });
+
+  it('throws on a key indented less than the first one', () => {
+    assertRejects('  a: 1\n  b: 2\nc: 3', 3, /unexpected indentation/);
+  });
+
+  it('throws on a deeper line inside a sequence (misaligned entry or multi-line plain scalar)', () => {
+    assertRejects('labels:\n  - a\n    - b', 3, /inside a sequence/);
+    assertRejects('labels:\n  - first part\n    continued', 3, /inside a sequence/);
+  });
+
+  it('throws on a non-key line under a sequence', () => {
+    assertRejects('labels:\n  - a\n  stray text\nb: 1', 3, /unexpected indentation/);
+  });
+
+  it('throws on a block scalar line indented less than its first line', () => {
+    assertRejects('a: |\n    one\n  two\nb: 1', 3, /block scalar/);
+  });
+
+  it('adds lineOffset to every reported line', () => {
+    assertRejects('a: 1\n  b: 2', 3, /unexpected indentation/, { lineOffset: 1 });
+  });
+
+  it('reads an indentless sequence (key and dashes in the same column)', () => {
+    assert.deepEqual(parseYaml('labels:\n- a\n- b\nnext: 1'), { labels: ['a', 'b'], next: 1 });
+    assert.deepEqual(parseYaml('steps:\n- name: a\n  tags:\n  - x\n- name: b'), {
+      steps: [{ name: 'a', tags: ['x'] }, { name: 'b' }],
+    });
+  });
+
+  it('reads a top-level sequence document', () => {
+    assert.deepEqual(parseYaml('- alice\n- handle: bjorn\n  name: Bjorn'), ['alice', { handle: 'bjorn', name: 'Bjorn' }]);
+  });
+
+  it('aligns a mapping with its first key when the dash is followed by several spaces', () => {
+    assert.deepEqual(parseYaml('s:\n  -   a: 1\n      b: 2'), { s: [{ a: 1, b: 2 }] });
+  });
+
+  it('reads a sequence nested under a bare dash', () => {
+    assert.deepEqual(parseYaml('s:\n  -\n    - a\n    - b'), { s: [['a', 'b']] });
   });
 });
 
@@ -283,6 +423,35 @@ describe('yaml: stringifyYaml', () => {
     assertStable({ a: 'say: "hi"' });
   });
 
+  it('parseScalar and serializeScalar are exact inverses for backslash, quote, newline and tab', () => {
+    // REVIEW-2026-09 §4 finding 4: a quoted backslash used to double on every save.
+    const values = [
+      'C:\\Users\\rdagum: home', // backslash in a value that must be quoted
+      'trailing backslash: \\', '"\\n" is not a newline: x', '" \\" ',
+      'say: "hi"', 'tab\there: x', 'cr\rlf: x', 'nul\0: x', 'bell\x07: x',
+      'a: b\\c "d" \te',
+    ];
+    for (const v of values) {
+      const text = stringifyYaml({ v });
+      assert.match(text, /^v: "/, `quoted: ${text}`);
+      assert.equal(parseYaml(text).v, v, `inverse failed for ${JSON.stringify(v)} via ${text}`);
+      // A second round trip writes the identical text: nothing grows per save.
+      assert.equal(stringifyYaml(parseYaml(text)), text);
+    }
+    // Sequence items have no block form, so a newline is escaped there.
+    assert.equal(stringifyYaml({ s: ['one\ntwo'] }), 's:\n  - "one\\ntwo"');
+    assertStable({ s: ['one\ntwo', 'tab\tx', 'back\\slash: x'] });
+  });
+
+  it('writes the escapes it reads', () => {
+    assert.equal(stringifyYaml({ a: 'x\ty: z' }), 'a: "x\\ty: z"');
+    assert.equal(stringifyYaml({ a: 'x\\y: z' }), 'a: "x\\\\y: z"');
+    assert.equal(stringifyYaml({ a: 'x\x01' }), 'a: "x\\x01"');
+    // A plain backslash needs no quoting and is written as is.
+    assert.equal(stringifyYaml({ a: 'C:\\path\\to' }), 'a: C:\\path\\to');
+    assertStable({ a: 'C:\\path\\to', b: '\\', c: '\\\\', d: 'x\\"' });
+  });
+
   it('emits multi-line strings as literal blocks', () => {
     assert.equal(stringifyYaml({ a: 'one\ntwo\n' }), 'a: |\n  one\n  two');
     assert.equal(stringifyYaml({ a: 'one\n\nthree\n' }), 'a: |\n  one\n\n  three');
@@ -290,6 +459,49 @@ describe('yaml: stringifyYaml', () => {
     assertStable({ a: 'one\ntwo\n', m: { b: 'deep\n\ntext\n' } });
   });
 
+  it('emits |- for a multi-line string without a trailing newline', () => {
+    // REVIEW-2026-09 §4 finding 10: "|" used to add a newline on every round trip.
+    assert.equal(stringifyYaml({ a: 'one\ntwo' }), 'a: |-\n  one\n  two');
+    assert.equal(stringifyYaml({ m: { a: 'x\n\ny' } }), 'm:\n  a: |-\n    x\n\n    y');
+    assertStable({ a: 'one\ntwo', b: 'one\ntwo\n', m: { c: 'x\n\ny' } });
+    const text = 'a: |-\n  one\n  two\nb: 1';
+    assert.equal(stringifyYaml(parseYaml(text)), text);
+  });
+
+  it('quotes a multi-line string that no plain literal block can reproduce', () => {
+    const cases = {
+      leading: '  indented first line\nsecond',
+      blankish: 'one\n   \ntwo',
+      many: 'one\n\n\n',
+      cr: 'one\r\ntwo',
+      only: '\n',
+    };
+    const text = stringifyYaml(cases);
+    for (const line of text.split('\n')) assert.match(line, /^[a-z]+: "/, `should be quoted: ${line}`);
+    assertStable(cases);
+  });
+});
+
+describe('yaml: block scalar chomping and placement', () => {
+  it('keeps every trailing line break with |+', () => {
+    assert.deepEqual(parseYaml('a: |+\n  one\n\n\nb: 1'), { a: 'one\n\n\n', b: 1 });
+    assert.deepEqual(parseYaml('a: |+\n  one\n'), { a: 'one\n' }, 'the final newline of the text is not a blank line');
+    assertStable(parseYaml('a: |+\n  one\n\nb: 1'));
+  });
+
+  it('reads an empty block as an empty string for clip and strip', () => {
+    assert.deepEqual(parseYaml('a: |\nb: |-\nc: 1'), { a: '', b: '', c: 1 });
+  });
+
+  it('reads a block scalar as a sequence item', () => {
+    assert.deepEqual(parseYaml('s:\n  - |\n    one\n    two\n  - |-\n    three\n  - x'), {
+      s: ['one\ntwo\n', 'three', 'x'],
+    });
+    assertStable(parseYaml('s:\n  - |\n    one\n    two'));
+  });
+});
+
+describe('yaml: stringifyYaml of a whole item', () => {
   it('is stable for a representative item', () => {
     assertStable({
       id: 'STORY-000001',
@@ -417,6 +629,36 @@ describe('yaml: patchScalarLine', () => {
     assert.equal(out, '---\nstatus_note: x\nstatus: Done\n---\n');
   });
 
+  it('patches the top-level key, never a nested one that comes first', () => {
+    // REVIEW-2026-09 §4 finding 9: `^\s*status:` used to hit agent.status.
+    const text = '---\nid: TASK-000001\nagent:\n  status: running\n  runs: []\nstatus: Backlog\n---\n\nbody\n';
+    assert.equal(
+      patchScalarLine(text, 'status', 'Done'),
+      '---\nid: TASK-000001\nagent:\n  status: running\n  runs: []\nstatus: Done\n---\n\nbody\n'
+    );
+    assert.equal(patchScalarLine('---\nagent:\n  status: running\n---\n', 'status', 'Done'), null, 'no top-level key: no patch');
+  });
+
+  it('anchors at the top-level column of a uniformly indented front matter', () => {
+    assert.equal(patchScalarLine('---\n  id: X\n  m:\n    status: a\n  status: b\n---\n', 'status', 'c'), '---\n  id: X\n  m:\n    status: a\n  status: c\n---\n');
+  });
+
+  it('keeps CRLF line endings and a BOM byte-identical', () => {
+    const text = '\uFEFF---\r\nid: X\r\nstatus: Backlog\r\n---\r\n\r\nstatus: body\r\n';
+    assert.equal(patchScalarLine(text, 'status', 'Done'), '\uFEFF---\r\nid: X\r\nstatus: Done\r\n---\r\n\r\nstatus: body\r\n');
+    // With a BOM the opening fence is still recognised, so a body line is never reached.
+    assert.equal(patchScalarLine('\uFEFF---\nid: X\n---\nstatus: body\n', 'status', 'Done'), null);
+  });
+
+  it('keeps a trailing comment on the patched line', () => {
+    assert.equal(patchScalarLine('---\nstatus: Backlog # set by hand\n---\n', 'status', 'Done'), '---\nstatus: Done # set by hand\n---\n');
+    assert.equal(patchScalarLine('---\nstatus: "a # b"\n---\n', 'status', 'Done'), '---\nstatus: Done\n---\n');
+  });
+
+  it('treats the key literally, not as a pattern', () => {
+    assert.equal(patchScalarLine('---\nxyz: 1\nx.z: 2\n---\n', 'x.z', 3), '---\nxyz: 1\nx.z: 3\n---\n');
+  });
+
   it('round-trips through the parser with the new value', () => {
     const out = patchScalarLine(file, 'status', 'Review');
     const { frontMatter } = splitDocument(out);
@@ -453,9 +695,24 @@ describe('yaml: flow mappings', () => {
     assertStable({ a: {}, b: [{}] });
   });
 
-  it('keeps braces that are not a mapping as a literal string', () => {
-    assert.deepEqual(parseYaml('a: {not a mapping}'), { a: '{not a mapping}' });
+  it('rejects braces that are not a mapping instead of turning them into a string', () => {
+    // REVIEW-2026-09 §4 finding 5: a mapping must never silently become text.
+    assert.throws(() => parseYaml('a: 1\nb: {not a mapping}'), /^Error: line 2: flow mapping entry is not a "key: value" pair/);
+    assert.throws(() => parseYaml('a: { x: 1, x: 2 }'), /line 1: duplicate key "x" in flow mapping/);
+    assert.throws(() => parseYaml('a: [x, { bad }]'), /line 1: flow mapping entry/);
+    assert.throws(() => parseYaml('s:\n  - { ok: 1 }\n  - { nope }'), /line 3: flow mapping entry/);
+    assert.throws(() => parseYaml('a:\n  {\n    x: 1,\n    y\n  }'), /line 2: flow mapping entry/); // where the flow starts
+    // Quoted braces are text.
     assert.deepEqual(parseYaml('a: "{ quoted: text }"'), { a: '{ quoted: text }' });
+  });
+
+  it('parses nested flow mappings and sequences', () => {
+    assert.deepEqual(parseYaml('a: { b: { c: 1 }, d: [x, { e: 2 }] }'), { a: { b: { c: 1 }, d: ['x', { e: 2 }] } });
+    assertStable(parseYaml('a: { b: { c: 1 } }'));
+  });
+
+  it('reads a multi-line flow collection that is a sequence item', () => {
+    assert.deepEqual(parseYaml('s:\n  - { a: 1,\n      b: 2 }\n  - c'), { s: [{ a: 1, b: 2 }, 'c'] });
   });
 
   it('reads a flow mapping wrapped onto the line below its key', () => {

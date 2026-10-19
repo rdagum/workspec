@@ -112,6 +112,22 @@ describe('parser: parseItem', () => {
     }
   });
 
+  it('lands a strict YAML parse error in record.errors, naming the file line', () => {
+    // Front-matter line 3 is file line 4 (line 1 is the opening fence).
+    const raw = '---\nid: STORY-000042\ntype: STORY\n   oops: 1\ntitle: t\nstatus: Ready\n---\n\nbody\n';
+    const rec = parseItem('items/STORY-000042.md', raw);
+    assert.equal(rec.errors.length, 1, rec.errors.join('; '));
+    assert.match(rec.errors[0], /^YAML parse error: line 4: unexpected indentation: "oops: 1"$/);
+    assert.deepEqual(rec.meta, {}, 'a partial parse is never exposed as the item metadata');
+    assert.equal(rec.body, '\nbody\n');
+    assert.equal(rec.raw, raw);
+  });
+
+  it('reports a non key/value line in the front matter with its file line', () => {
+    const rec = parseItem('items/STORY-000042.md', GOOD.replace('priority: high\n', 'priority: high\nnot a pair\n'));
+    assert.ok(rec.errors.some((e) => /^YAML parse error: line 7: expected a "key: value" pair/.test(e)), rec.errors.join('; '));
+  });
+
   it('accepts a CRLF file and a BOM file without spurious errors', () => {
     const crlf = GOOD.replace(/\n/g, '\r\n');
     const rec1 = parseItem('items/STORY-000042.md', crlf);
@@ -160,6 +176,12 @@ describe('parser: parseConfig', () => {
 
   it('returns an empty object for an empty file', () => {
     assert.deepEqual(parseConfig(''), { data: {}, error: null });
+  });
+
+  it('reports a strict parse error with the file line instead of returning partial data', () => {
+    const { data, error } = parseConfig('columns:\n  - Backlog\n stray\n');
+    assert.deepEqual(data, {});
+    assert.match(error, /^line 3: /);
   });
 
   it('keeps nested settings and comments-free values', () => {
@@ -225,6 +247,13 @@ describe('parser: changeStatus', () => {
     assert.match(out, /^status: Review$/m);
   });
 
+  it('moves the item, not a nested agent.status that precedes the top-level key', () => {
+    const raw = GOOD.replace('status: Ready\n', 'agent:\n  status: running\nstatus: Ready\n');
+    const out = changeStatus(parseItem('items/STORY-000042.md', raw), 'Done');
+    assert.equal(out, raw.replace('\nstatus: Ready\n', '\nstatus: Done\n'));
+    assert.ok(out.includes('  status: running'));
+  });
+
   it('quotes a status that needs quoting', () => {
     const rec = parseItem('items/STORY-000042.md', GOOD);
     assert.match(changeStatus(rec, 'yes'), /^status: "yes"$/m);
@@ -246,6 +275,82 @@ describe('parser: changeStatus', () => {
     changeStatus(rec, 'Done');
     assert.equal(rec.meta.status, 'Ready');
     assert.equal(rec.raw, GOOD);
+  });
+});
+
+describe('parser: round-trip guard (record.lossy)', () => {
+  const { roundTripDifference } = WS;
+  const item = (extra) => GOOD.replace('custom:\n  vendor: acme\n', extra);
+  const lossyAt = (extra) => {
+    const rec = parseItem('items/STORY-000042.md', item(extra));
+    assert.deepEqual(rec.errors, [], rec.errors.join('; '));
+    return rec.lossy ? rec.warnings.find((w) => /raw YAML only/.test(w)) : null;
+  };
+
+  it('is false for canonical front matter, and present on every parsed record', () => {
+    const rec = parseItem('items/STORY-000042.md', GOOD);
+    assert.equal(rec.lossy, false);
+    assert.deepEqual(rec.warnings, []);
+    assert.equal(parseItem('items/X.md', '# no front matter\n').lossy, false);
+  });
+
+  it('tolerates formatting: quotes, indentation, comments, flow versus block, null spellings', () => {
+    const tolerated = [
+      "custom:\n    vendor: 'acme'\n    note: \"plain\"\n", // 4-space indent, quote styles
+      'custom: { vendor: acme, tags: [a, b] }\n', // flow collections
+      'custom:\n  tags:\n  - a\n  - b\n', // indentless sequence
+      'custom:\n  vendor: acme # trailing comment\n  # standalone\n  empty: ~\n',
+      'custom:\n  answer: yes\n  odd: "[" and "]" move\n', // written back quoted, same string
+      'custom:\n  steps:\n    - |\n      multi\n      line\n', // block item, written back escaped
+      'custom:\n  keep: |+\n    kept\n\n  path: "C:\\path"\n',
+      'custom:\n  wrapped:\n    { a: 1,\n      b: [x, y] }\n',
+    ];
+    for (const extra of tolerated) assert.equal(lossyAt(extra), null, extra);
+  });
+
+  it('flags content the serializer would change, naming where', () => {
+    const flagged = {
+      'custom:\n  a: &anchor value\n  b: *anchor\n': 'custom.a',
+      'custom:\n  n: !!str 42\n': 'custom.n',
+      'custom:\n  folded: >\n    one\n    two\n': 'custom.folded',
+      'estimate: 007\n': 'estimate',
+      'custom:\n  big: 12345678901234567890\n': 'custom.big',
+      'custom:\n  title: [WIP] still a plain string\n': 'custom.title',
+      'custom:\n  nested: [[a, b]]\n': 'custom.nested[0]',
+    };
+    for (const [extra, at] of Object.entries(flagged)) {
+      const warning = lossyAt(extra);
+      assert.ok(warning, `should be lossy: ${extra}`);
+      assert.ok(warning.endsWith(`(first difference at ${at}).`), warning);
+    }
+  });
+
+  it('flags a file that does not parse, without a second message', () => {
+    const rec = parseItem('items/STORY-000042.md', GOOD.replace('priority: high\n', 'priority: high\n   oops: 1\n'));
+    assert.equal(rec.lossy, true);
+    assert.equal(rec.errors.length, 1);
+    assert.deepEqual(rec.warnings, []);
+  });
+
+  it('flags a half-merged file', () => {
+    const raw = GOOD.replace('priority: high\n', '<<<<<<< HEAD\npriority: high\n=======\npriority: low\n>>>>>>> other\n');
+    assert.equal(parseItem('items/STORY-000042.md', raw).lossy, true);
+  });
+
+  it('roundTripDifference is null exactly when the text survives stringify(parse(text))', () => {
+    assert.equal(roundTripDifference('a: 1\nb: [x]\n'), null);
+    assert.equal(roundTripDifference('a: &x 1\n'), 'a');
+    assert.throws(() => roundTripDifference('a: 1\n  b: 2'), /line 2/);
+  });
+
+  it('never re-serializes a lossy record to change its status', () => {
+    const raw = '---\nid: TASK-000001\ntype: TASK\ntitle: &t anchored\ncreated: d\nupdated: d\nspec_version: 1.0\n---\n\nbody\n';
+    const rec = parseItem('items/TASK-000001.md', raw);
+    assert.equal(rec.lossy, true);
+    assert.throws(() => changeStatus(rec, 'Backlog'), /raw YAML/);
+    // With a status line the surgical patch is still allowed: it touches one line only.
+    const withStatus = parseItem('items/TASK-000001.md', raw.replace('created:', 'status: Ready\ncreated:'));
+    assert.match(changeStatus(withStatus, 'Done'), /^title: &t anchored$/m);
   });
 });
 
@@ -274,6 +379,8 @@ describe('parser: unresolved Git conflict markers', () => {
     const rec = parseItem('items/STORY-000014.md', conflicted);
     assert.ok(rec.errors.some((e) => /Unresolved Git conflict markers/.test(e)), rec.errors.join('; '));
     assert.equal(rec.meta.id, 'STORY-000014', 'the rest of the file is still read');
+    assert.equal(rec.meta.priority, 'high', 'only the "ours" side is read, so the strict parser sees no duplicate key');
+    assert.equal(rec.errors.length, 1, rec.errors.join('; '));
   });
 
   it('reports a half-merged config file as an error instead of parsing it quietly', () => {
