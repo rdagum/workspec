@@ -111,6 +111,13 @@ describe('fixtures: values the round trip alone cannot pin down', () => {
     assert.deepEqual(meta.escaped_items, ['line one\nline two', 'tab\there']);
     assert.equal(meta.plain_backslash, 'C:\\path\\to\\file');
   });
+
+  it('block-scalars.md: | keeps one trailing newline, |- none', () => {
+    const meta = parsed('block-scalars.md');
+    assert.equal(meta.notes, 'A single line\n');
+    assert.equal(meta.stripped, 'Strip chomping: no trailing newline\n\neven after a blank line');
+    assert.equal(meta.custom.stripped_nested, 'Nested strip block\nwithout a final newline');
+  });
 });
 
 describe('fixtures: round trip through parseItem / serializeItem', () => {

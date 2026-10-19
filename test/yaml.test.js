@@ -459,6 +459,49 @@ describe('yaml: stringifyYaml', () => {
     assertStable({ a: 'one\ntwo\n', m: { b: 'deep\n\ntext\n' } });
   });
 
+  it('emits |- for a multi-line string without a trailing newline', () => {
+    // REVIEW-2026-09 §4 finding 10: "|" used to add a newline on every round trip.
+    assert.equal(stringifyYaml({ a: 'one\ntwo' }), 'a: |-\n  one\n  two');
+    assert.equal(stringifyYaml({ m: { a: 'x\n\ny' } }), 'm:\n  a: |-\n    x\n\n    y');
+    assertStable({ a: 'one\ntwo', b: 'one\ntwo\n', m: { c: 'x\n\ny' } });
+    const text = 'a: |-\n  one\n  two\nb: 1';
+    assert.equal(stringifyYaml(parseYaml(text)), text);
+  });
+
+  it('quotes a multi-line string that no plain literal block can reproduce', () => {
+    const cases = {
+      leading: '  indented first line\nsecond',
+      blankish: 'one\n   \ntwo',
+      many: 'one\n\n\n',
+      cr: 'one\r\ntwo',
+      only: '\n',
+    };
+    const text = stringifyYaml(cases);
+    for (const line of text.split('\n')) assert.match(line, /^[a-z]+: "/, `should be quoted: ${line}`);
+    assertStable(cases);
+  });
+});
+
+describe('yaml: block scalar chomping and placement', () => {
+  it('keeps every trailing line break with |+', () => {
+    assert.deepEqual(parseYaml('a: |+\n  one\n\n\nb: 1'), { a: 'one\n\n\n', b: 1 });
+    assert.deepEqual(parseYaml('a: |+\n  one\n'), { a: 'one\n' }, 'the final newline of the text is not a blank line');
+    assertStable(parseYaml('a: |+\n  one\n\nb: 1'));
+  });
+
+  it('reads an empty block as an empty string for clip and strip', () => {
+    assert.deepEqual(parseYaml('a: |\nb: |-\nc: 1'), { a: '', b: '', c: 1 });
+  });
+
+  it('reads a block scalar as a sequence item', () => {
+    assert.deepEqual(parseYaml('s:\n  - |\n    one\n    two\n  - |-\n    three\n  - x'), {
+      s: ['one\ntwo\n', 'three', 'x'],
+    });
+    assertStable(parseYaml('s:\n  - |\n    one\n    two'));
+  });
+});
+
+describe('yaml: stringifyYaml of a whole item', () => {
   it('is stable for a representative item', () => {
     assertStable({
       id: 'STORY-000001',

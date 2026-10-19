@@ -213,6 +213,7 @@ function flowDepth(s) {
 
 const isSkippable = (line) => line.trim() === '' || line.trimStart().startsWith('#');
 const isDash = (content) => content.startsWith('- ') || content === '-';
+const isBlockMarker = (s) => /^[|>][+-]?$/.test(s);
 
 /**
  * Parse a YAML document (the front-matter block, without the `---` fences)
@@ -227,6 +228,7 @@ const isDash = (content) => content.startsWith('- ') || content === '-';
 function parseYaml(text, options = {}) {
   const offset = options.lineOffset || 0;
   const lines = text.split(/\r?\n/);
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop(); // the final newline ends a line, it is not one
   const source = lines.slice(); // parseSequence rewrites lines; errors quote the original
   let idx = 0;
 
@@ -299,13 +301,19 @@ function parseYaml(text, options = {}) {
       collected.push(line.slice(contentIndent));
       idx++;
     }
-    // Trim trailing blank lines.
-    while (collected.length && collected[collected.length - 1] === '') collected.pop();
+    // Trailing blank lines belong to the block; only "keep" (|+) retains them.
+    let trailing = 0;
+    while (collected.length && collected[collected.length - 1] === '') {
+      collected.pop();
+      trailing++;
+    }
     let value = collected.join('\n');
     const folded = marker[0] === '>';
     if (folded) value = value.replace(/\n(?!\n)/g, ' ');
-    if (marker.length === 1) value += '\n'; // clip: keep single trailing newline
-    return value;
+    if (value === '') return marker[1] === '+' ? '\n'.repeat(trailing) : '';
+    if (marker[1] === '-') return value; // strip: no trailing newline
+    if (marker[1] === '+') return value + '\n'.repeat(trailing + 1); // keep: every line break
+    return value + '\n'; // clip: exactly one trailing newline
   }
 
   function parseSequence(seqIndent) {
@@ -325,7 +333,9 @@ function parseYaml(text, options = {}) {
       if (!isDash(content)) break; // the parent's next key, checked by the parent
       const itemBody = stripComment(content.slice(1).trim());
       idx++;
-      if (itemBody === '') {
+      if (isBlockMarker(itemBody)) {
+        arr.push(parseBlockScalar(ci, itemBody));
+      } else if (itemBody === '') {
         // Nested structure under the dash.
         const nxt = nextSignificant();
         if (nxt && indentOf(nxt) > seqIndent) {
@@ -375,7 +385,7 @@ function parseYaml(text, options = {}) {
       firstLine[key] = idx;
       idx++;
 
-      if (rest === '|' || rest === '>' || rest === '|-' || rest === '>-' || rest === '|+' || rest === '>+') {
+      if (isBlockMarker(rest)) {
         obj[key] = parseBlockScalar(ci, rest);
         continue;
       }
@@ -486,15 +496,32 @@ function appendKey(prefix, key, value, childIndent, lines) {
     serializeNode(value, childIndent + 1, lines);
     return;
   }
-  if (typeof value === 'string' && value.includes('\n')) {
-    lines.push(`${prefix}${key}: |`);
+  const style = typeof value === 'string' ? blockStyle(value) : null;
+  if (style) {
+    lines.push(`${prefix}${key}: ${style}`);
     const blockPad = INDENT.repeat(childIndent + 1);
-    for (const ln of value.replace(/\n$/, '').split('\n')) {
+    for (const ln of (style === '|' ? value.slice(0, -1) : value).split('\n')) {
       lines.push(ln === '' ? '' : blockPad + ln);
     }
     return;
   }
   lines.push(`${prefix}${key}: ${serializeScalar(value)}`);
+}
+
+/**
+ * The literal block header that reproduces a multi-line string exactly, or
+ * null when no plain `|` / `|-` can (control characters, whitespace-only or
+ * trailing blank lines, a first line that starts with whitespace); such a
+ * string is written double-quoted with escapes instead.
+ */
+function blockStyle(s) {
+  if (!s.includes('\n') || /[\x00-\x08\x0b-\x1f\x7f]/.test(s)) return null;
+  const clip = s.endsWith('\n');
+  const blockLines = (clip ? s.slice(0, -1) : s).split('\n');
+  if (blockLines[blockLines.length - 1] === '') return null; // more than one trailing newline
+  if (blockLines.some((l) => l !== '' && l.trim() === '')) return null; // would read back as empty
+  if (/^\s/.test(blockLines.find((l) => l !== ''))) return null; // would need an indentation indicator
+  return clip ? '|' : '|-';
 }
 
 /** Serialize an object back to YAML text, preserving key insertion order. */
