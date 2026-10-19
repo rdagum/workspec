@@ -13,7 +13,8 @@
 
 const { buildColumns, distinctValues, sortItems, PRIORITY_RANK } = WS;
 const { isEpic, epicIndex, epicProgress, doneColumn, idList } = WS;
-const { serializeItem, changeStatus, validateItem } = WS;
+const { serializeItem, changeStatus, validateItem, parseItem } = WS;
+const { splitDocument, replaceFrontMatter } = WS;
 const { summarize, periodRange } = WS;
 const { knownIds, lowestFreeBlock, appendBlockEntry, setLocalKeys, REGISTRY_PATH, LOCAL_PATH } = WS;
 
@@ -302,10 +303,16 @@ class Store {
    * Persist an edited item. `meta`/`body` come from the editor. Only the one
    * file is rewritten (PROMPT.md §5.2). Re-validates and updates the record
    * in place so the board reflects changes without a reload.
+   *
+   * A lossy record (core/parser.js round-trip guard) is never re-serialized
+   * from `meta`: `rawFrontMatter` — the raw-YAML editor's text, or the file's
+   * own front matter when omitted — is written verbatim with the body, and the
+   * record is re-parsed from what was written.
    */
-  async saveItem(path, meta, body) {
+  async saveItem(path, meta, body, rawFrontMatter = null) {
     const record = this.model.items.get(path);
     if (!record) throw new Error(`Unknown item: ${path}`);
+    if (record.lossy) return this._saveVerbatim(record, rawFrontMatter, body);
     const text = serializeItem(meta, body);
     await this.state.fs.writeFile(path, text);
     record.raw = text;
@@ -315,6 +322,20 @@ class Store {
     record.warnings = [];
     validateItem(record, this.model.workflow);
     this.set({ dirty: false, message: `Saved ${meta.id || record.fileName}` });
+    return record;
+  }
+
+  async _saveVerbatim(record, rawFrontMatter, body) {
+    const own = splitDocument(record.raw).frontMatter;
+    const frontMatter = rawFrontMatter != null ? rawFrontMatter : own != null ? own : '';
+    const text = replaceFrontMatter(record.raw, frontMatter, body);
+    await this.state.fs.writeFile(record.path, text);
+    // Re-parse what was written: the text may now parse, or no longer be lossy.
+    const fresh = parseItem(record.path, text);
+    validateItem(fresh, this.model.workflow);
+    for (const key of ['raw', 'meta', 'body', 'warnings', 'lossy']) record[key] = fresh[key];
+    record.errors = [...new Set(fresh.errors)];
+    this.set({ dirty: false, message: `Saved ${record.meta.id || record.fileName}` });
     return record;
   }
 
@@ -348,6 +369,7 @@ class Store {
       body,
       errors: [],
       warnings: [],
+      lossy: false, // written by serializeItem, so it round-trips by construction
     };
     validateItem(record, this.model.workflow);
     this.model.items.set(path, record);

@@ -17,11 +17,13 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { loadWS } = require('./load.js');
-const { BOM, readFixtures, normalizeDocument, withCrlf, withBom } = require('./helpers.js');
+const { BOM, REFORMAT_DIR, LOSSY_DIR, readFixtures, normalizeDocument, withCrlf, withBom } = require('./helpers.js');
 
-const { parseItem, serializeItem, parseYaml, stringifyYaml, splitDocument } = loadWS();
+const { parseItem, serializeItem, parseYaml, stringifyYaml, splitDocument, replaceFrontMatter } = loadWS();
 
 const fixtures = readFixtures();
+const reformatFixtures = readFixtures(REFORMAT_DIR);
+const lossyFixtures = readFixtures(LOSSY_DIR);
 
 /** Fixtures every contributor must keep; they are the acceptance criteria of STORY-000003. */
 const REQUIRED_FIXTURES = [
@@ -49,6 +51,7 @@ function roundTrip(name, raw) {
   const path = fixturePath(raw);
   const rec = parseItem(path, raw);
   assert.deepEqual(rec.errors, [], `${name} should parse without errors`);
+  assert.equal(rec.lossy, false, `${name} must not be flagged by the round-trip guard: ${rec.warnings.join('; ')}`);
   const once = serializeItem(rec.meta, rec.body);
   assert.equal(normalizeDocument(once), normalizeDocument(raw), `${name} is not content-equal after a round trip`);
   const again = parseItem(path, once);
@@ -166,5 +169,43 @@ describe('fixtures: front matter alone round-trips through parseYaml / stringify
         `${name} front matter is not content-equal`
       );
     });
+  }
+});
+
+describe('fixtures/reformat: valid layouts the serializer rewrites without changing content', () => {
+  it('the corpus is not empty', () => assert.ok(reformatFixtures.length > 0));
+  for (const { name, raw } of reformatFixtures) {
+    for (const [variant, text] of [['LF', raw], ['CRLF', withCrlf(raw)], ['BOM', withBom(raw)]]) {
+      it(`${name} (${variant})`, () => {
+        const rec = parseItem(fixturePath(text), text);
+        assert.deepEqual(rec.errors, [], `${name} should parse without errors`);
+        assert.equal(rec.lossy, false, `${name} must not be lossy: ${rec.warnings.join('; ')}`);
+        const once = serializeItem(rec.meta, rec.body);
+        const again = parseItem(fixturePath(text), once);
+        assert.deepEqual(again.meta, rec.meta, `${name}: a save changed a value`);
+        assert.equal(again.body, rec.body.replace(/^(?:\r?\n)+/, '\n'));
+        assert.equal(serializeItem(again.meta, again.body), once, `${name} is not stable after the first write`);
+      });
+    }
+  }
+});
+
+describe('fixtures/lossy: flagged by the round-trip guard and saved verbatim', () => {
+  it('the corpus is not empty', () => assert.ok(lossyFixtures.length > 0));
+  for (const { name, raw } of lossyFixtures) {
+    for (const [variant, text] of [['LF', raw], ['CRLF', withCrlf(raw)], ['BOM', withBom(raw)]]) {
+      it(`${name} (${variant})`, () => {
+        const rec = parseItem(fixturePath(text), text);
+        assert.deepEqual(rec.errors, [], `${name} should parse without errors`);
+        assert.equal(rec.lossy, true, `${name} should be flagged lossy`);
+        assert.ok(rec.warnings.some((w) => /raw YAML only/.test(w)), rec.warnings.join('; '));
+        // An unedited verbatim save (store.saveItem for a lossy record) is byte-identical.
+        const { frontMatter, body } = splitDocument(text);
+        assert.equal(replaceFrontMatter(text, frontMatter, body), text);
+        // An edit typed with LF in a CRLF file keeps the file CRLF.
+        const edited = replaceFrontMatter(text, frontMatter.replace(/\r\n/g, '\n').replace('status: Ready', 'status: Done'), body);
+        assert.equal(edited, text.replace('status: Ready', 'status: Done'));
+      });
+    }
   }
 });

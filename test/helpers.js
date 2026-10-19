@@ -9,19 +9,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'items');
+// Valid files the serializer reformats without changing content (flow
+// collections, indentless sequences, ...): not lossy, not text-identical.
+const REFORMAT_DIR = path.join(__dirname, 'fixtures', 'reformat');
+// Valid files the round-trip guard must flag lossy (anchors, tags, folded blocks).
+const LOSSY_DIR = path.join(__dirname, 'fixtures', 'lossy');
 const BOM = '﻿';
 
 /**
- * Read every fixture under test/fixtures/items as raw bytes decoded as UTF-8,
- * preserving BOM and line endings. Returns [{ name, file, raw }] sorted by name.
+ * Read every fixture under test/fixtures/items (or another fixture directory)
+ * as raw bytes decoded as UTF-8, preserving BOM and line endings. Returns
+ * [{ name, file, raw }] sorted by name.
  */
-function readFixtures() {
+function readFixtures(dir = FIXTURE_DIR) {
   return fs
-    .readdirSync(FIXTURE_DIR)
+    .readdirSync(dir)
     .filter((name) => name.endsWith('.md'))
     .sort()
     .map((name) => {
-      const file = path.join(FIXTURE_DIR, name);
+      const file = path.join(dir, name);
       return { name, file, raw: fs.readFileSync(file, 'utf8') };
     });
 }
@@ -97,4 +103,4 @@ function withBom(text) {
   return BOM + String(text).replace(/^﻿/, '');
 }
 
-module.exports = { FIXTURE_DIR, BOM, readFixtures, normalizeDocument, withCrlf, withBom };
+module.exports = { FIXTURE_DIR, REFORMAT_DIR, LOSSY_DIR, BOM, readFixtures, normalizeDocument, withCrlf, withBom };

@@ -104,7 +104,21 @@ function escapeDouble(s) {
   return s.replace(/[\\"\x00-\x1f\x7f]/g, (c) => ESCAPE[c] || `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
 }
 
-function parseScalar(raw) {
+// Plain text that real YAML reads as something else (anchor, alias, tag,
+// directive, reserved character, block indicator, an unclosed flow
+// collection, a nested "- "/"? "/": " indicator). This engine keeps it as a
+// string, so writing it back quoted would change what the file says.
+const EXOTIC_PLAIN = /^(?:[&*!%@`|>[{]|[-?:](?:\s|$))/;
+
+/**
+ * Parse one scalar or flow collection. With `fid` (the round-trip guard's
+ * fidelity mode) each string or integer leaf is instead a token that tells
+ * apart what the formatting-free comparison must keep apart: "s:" + the
+ * string (however it was quoted), "i:" + the integer as written, "x:" + text
+ * this engine does not reproduce. null, booleans and empty collections are
+ * returned as values, since every spelling of them means the same.
+ */
+function parseScalar(raw, fid = false) {
   const s = raw.trim();
   if (s === '' || s === '~' || s === 'null') return null;
   if (s === 'true') return true;
@@ -112,17 +126,19 @@ function parseScalar(raw) {
 
   // Quoted strings — strip the quotes and decode the escapes.
   if (isQuoted(s) && s[0] === '"') {
-    return unescapeDouble(s.slice(1, -1));
+    const v = unescapeDouble(s.slice(1, -1));
+    return fid ? `s:${v}` : v;
   }
   if (isQuoted(s) && s[0] === "'") {
-    return s.slice(1, -1).replace(/''/g, "'");
+    const v = s.slice(1, -1).replace(/''/g, "'");
+    return fid ? `s:${v}` : v;
   }
 
   // Inline flow sequence: [], [a, b, c]
   if (s[0] === '[' && s[s.length - 1] === ']') {
     const inner = s.slice(1, -1).trim();
     if (inner === '') return [];
-    return splitFlow(inner).map((part) => parseScalar(part));
+    return splitFlow(inner).map((part) => parseScalar(part, fid));
   }
 
   // Inline flow mapping: {}, { block: 1, owner: rdagum }. The ID block registry
@@ -137,15 +153,16 @@ function parseScalar(raw) {
       const kv = splitKeyValue(part);
       if (!kv || kv.key === '') throw new Error(`flow mapping entry is not a "key: value" pair (${part || 'empty'})`);
       if (Object.prototype.hasOwnProperty.call(obj, kv.key)) throw new Error(`duplicate key "${kv.key}" in flow mapping`);
-      obj[kv.key] = parseScalar(kv.rest);
+      obj[kv.key] = parseScalar(kv.rest, fid);
     }
     return obj;
   }
 
   // Integers become numbers; decimals stay strings so values like "1.0"
   // (e.g. spec_version) round-trip exactly instead of collapsing to "1".
-  if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+  if (/^-?\d+$/.test(s)) return fid ? `i:${s}` : parseInt(s, 10);
 
+  if (fid) return `${EXOTIC_PLAIN.test(s) ? 'x' : 's'}:${s}`;
   return s;
 }
 
@@ -227,6 +244,7 @@ const isBlockMarker = (s) => /^[|>][+-]?$/.test(s);
  */
 function parseYaml(text, options = {}) {
   const offset = options.lineOffset || 0;
+  const fid = !!options.fidelity; // internal: leaf tokens for roundTripDifference
   const lines = text.split(/\r?\n/);
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop(); // the final newline ends a line, it is not one
   const source = lines.slice(); // parseSequence rewrites lines; errors quote the original
@@ -243,7 +261,7 @@ function parseYaml(text, options = {}) {
   // parseScalar knows no line numbers; attach the line the value started on.
   function scalarAt(i, raw) {
     try {
-      return parseScalar(raw);
+      return parseScalar(raw, fid);
     } catch (err) {
       throw fail(i, err.message);
     }
@@ -282,7 +300,15 @@ function parseYaml(text, options = {}) {
     return first;
   }
 
+  // A literal block is just a string (the serializer may quote it instead); a
+  // folded one is never written back as folded, so it never compares equal.
   function parseBlockScalar(parentIndent, marker) {
+    const value = readBlockScalar(parentIndent, marker);
+    if (!fid) return value;
+    return marker[0] === '>' ? `x:${marker}${value}` : `s:${value}`;
+  }
+
+  function readBlockScalar(parentIndent, marker) {
     // Consume all lines indented deeper than parentIndent (blanks included).
     const collected = [];
     let contentIndent = null;
@@ -532,6 +558,64 @@ function stringifyYaml(obj) {
 }
 
 /**
+ * Where two parsed trees first differ, as a path such as `custom.note` or
+ * `labels[2]` (`(document)` for the root), or null when they are identical.
+ * Key order counts: it is part of what a save must preserve.
+ */
+function firstDifference(a, b, path = '') {
+  const kind = (v) => (Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v);
+  const here = path || '(document)';
+  if (kind(a) !== kind(b)) return here;
+  if (kind(a) === 'array') {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const d = i < a.length && i < b.length ? firstDifference(a[i], b[i], `${path}[${i}]`) : `${path}[${i}]`;
+      if (d) return d;
+    }
+    return null;
+  }
+  if (kind(a) === 'object') {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    for (let i = 0; i < Math.max(ka.length, kb.length); i++) {
+      const key = ka[i] !== undefined ? ka[i] : kb[i];
+      const at = path ? `${path}.${key}` : key;
+      if (ka[i] !== kb[i]) return at;
+      const d = firstDifference(a[key], b[key], at);
+      if (d) return d;
+    }
+    return null;
+  }
+  return a === b ? null : here;
+}
+
+/**
+ * Round-trip guard (REVIEW-2026-09 A1): would writing this YAML back through
+ * stringifyYaml(parseYaml(text)) change what it says? Returns null when it
+ * would not, otherwise the path of the first difference.
+ *
+ * The comparison is made on the parsed structure, so formatting is tolerated:
+ * indentation, comments, blank lines, quote style ('x', "x", x), flow versus
+ * block collections, a literal block versus an escaped string, and the
+ * spelling of null. Content is not: a dropped or reordered key, a changed
+ * string, an integer written differently (007), and text this engine keeps
+ * as a plain string although YAML gives it a meaning (&anchor, *alias, !tag,
+ * a folded > block). Throws, like parseYaml, when `text` does not parse.
+ */
+function roundTripDifference(text) {
+  const value = parseYaml(text);
+  const written = stringifyYaml(value);
+  let again;
+  let writtenTokens;
+  try {
+    again = parseYaml(written);
+    writtenTokens = parseYaml(written, { fidelity: true });
+  } catch (err) {
+    return `(document): the re-serialized text does not parse (${err.message})`;
+  }
+  return firstDifference(parseYaml(text, { fidelity: true }), writtenTokens) || firstDifference(value, again);
+}
+
+/**
  * Split a work-item file into { frontMatter, body }.
  * `frontMatter` is the YAML text between the leading `---` fences (without them).
  * Returns frontMatter === null when the file has no front matter.
@@ -547,6 +631,23 @@ function splitDocument(text) {
 function joinDocument(frontMatterText, body) {
   const fm = frontMatterText.replace(/\s+$/, '');
   return `---\n${fm}\n---\n\n${body.replace(/^(?:\r?\n)+/, '')}`;
+}
+
+/**
+ * Rebuild a file with new front-matter text and body, keeping everything else
+ * of the original exactly: a BOM, the fences as written, the line ending.
+ * This is the verbatim save for items the round-trip guard flags: the text
+ * typed in the raw editor is written as is, never re-serialized.
+ * `frontMatterText` uses LF or the file's own line ending; in a CRLF file
+ * its line breaks are written as CRLF.
+ */
+function replaceFrontMatter(fileText, frontMatterText, body) {
+  const m = String(fileText).match(/^(﻿?---[ \t]*(\r?\n))[\s\S]*?(\r?\n---[ \t]*)(?:(\r?\n)[\s\S]*)?$/);
+  if (!m) return `---\n${frontMatterText}\n---\n${body}`;
+  const eol = m[2];
+  const fm = eol === '\r\n' ? frontMatterText.replace(/\r?\n/g, '\r\n') : frontMatterText;
+  const afterFence = m[4] != null ? m[4] : body !== '' ? eol : '';
+  return m[1] + fm + m[3] + afterFence + body;
 }
 
 /**
@@ -592,5 +693,8 @@ function patchScalarLine(fileText, key, newValue) {
   return null;
 }
 
-Object.assign(WS, { parseYaml, stringifyYaml, splitDocument, joinDocument, patchScalarLine });
+Object.assign(WS, {
+  parseYaml, stringifyYaml, splitDocument, joinDocument, patchScalarLine,
+  roundTripDifference, replaceFrontMatter,
+});
 })(window.WS = window.WS || {});

@@ -8,7 +8,7 @@
 (function (WS) {
 'use strict';
 
-const { parseYaml, stringifyYaml, splitDocument, joinDocument, patchScalarLine } = WS;
+const { parseYaml, stringifyYaml, splitDocument, joinDocument, patchScalarLine, roundTripDifference } = WS;
 const { isValidId } = WS;
 
 // Required metadata fields (SPEC.md §8).
@@ -74,6 +74,9 @@ function parseItem(path, raw) {
     body: '',
     errors: [],
     warnings: [],
+    // True when `meta` cannot be written back without changing the file's
+    // content: raw-YAML editing only, and saveItem writes the raw text verbatim.
+    lossy: false,
   };
 
   const { frontMatter, body } = splitDocument(raw);
@@ -89,17 +92,35 @@ function parseItem(path, raw) {
     return record;
   }
 
+  // A half-merged file's metadata is a guess (the "ours" side), and a file
+  // that does not parse has none: neither may be re-serialized from `meta`.
+  if (conflicted) record.lossy = true;
+
   // Line 1 of the file is the opening fence, so front-matter line N is file line N + 1.
   try {
     record.meta = parseYaml(conflicted ? oursSide(frontMatter) : frontMatter, { lineOffset: 1 }) || {};
   } catch (err) {
     record.errors.push(`YAML parse error: ${err.message}`);
+    record.lossy = true;
     return record;
+  }
+
+  // Round-trip guard (REVIEW-2026-09 A1): front matter that the serializer
+  // would not reproduce is edited as raw YAML only and saved verbatim.
+  if (!conflicted) {
+    const at = roundTripDifference(frontMatter);
+    if (at) {
+      record.lossy = true;
+      record.warnings.push(`${LOSSY_MESSAGE} (first difference at ${at}).`);
+    }
   }
 
   validateItem(record);
   return record;
 }
+
+const LOSSY_MESSAGE =
+  'Front matter uses YAML the form editor would rewrite differently, so the editor opens it as raw YAML only and saves it verbatim';
 
 /** Populate record.errors / record.warnings per the validation rules (PROMPT.md §10). */
 function validateItem(record, workflowStatuses = null) {
@@ -148,11 +169,15 @@ function serializeItem(meta, body) {
 
 /**
  * Surgical status change for drag/drop: rewrite only the `status:` line in the
- * raw file text. Falls back to a full re-serialize if the line can't be found.
+ * raw file text. Falls back to a full re-serialize if the line can't be found,
+ * except for a lossy record, which must never be re-serialized.
  */
 function changeStatus(record, newStatus) {
   const patched = patchScalarLine(record.raw, 'status', newStatus);
   if (patched !== null) return patched;
+  if (record.lossy) {
+    throw new Error('this item has no top-level "status:" line and can only be edited as raw YAML');
+  }
   const meta = { ...record.meta, status: newStatus };
   return serializeItem(meta, record.body);
 }
