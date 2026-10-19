@@ -112,6 +112,22 @@ describe('parser: parseItem', () => {
     }
   });
 
+  it('lands a strict YAML parse error in record.errors, naming the file line', () => {
+    // Front-matter line 3 is file line 4 (line 1 is the opening fence).
+    const raw = '---\nid: STORY-000042\ntype: STORY\n   oops: 1\ntitle: t\nstatus: Ready\n---\n\nbody\n';
+    const rec = parseItem('items/STORY-000042.md', raw);
+    assert.equal(rec.errors.length, 1, rec.errors.join('; '));
+    assert.match(rec.errors[0], /^YAML parse error: line 4: unexpected indentation: "oops: 1"$/);
+    assert.deepEqual(rec.meta, {}, 'a partial parse is never exposed as the item metadata');
+    assert.equal(rec.body, '\nbody\n');
+    assert.equal(rec.raw, raw);
+  });
+
+  it('reports a non key/value line in the front matter with its file line', () => {
+    const rec = parseItem('items/STORY-000042.md', GOOD.replace('priority: high\n', 'priority: high\nnot a pair\n'));
+    assert.ok(rec.errors.some((e) => /^YAML parse error: line 7: expected a "key: value" pair/.test(e)), rec.errors.join('; '));
+  });
+
   it('accepts a CRLF file and a BOM file without spurious errors', () => {
     const crlf = GOOD.replace(/\n/g, '\r\n');
     const rec1 = parseItem('items/STORY-000042.md', crlf);
@@ -160,6 +176,12 @@ describe('parser: parseConfig', () => {
 
   it('returns an empty object for an empty file', () => {
     assert.deepEqual(parseConfig(''), { data: {}, error: null });
+  });
+
+  it('reports a strict parse error with the file line instead of returning partial data', () => {
+    const { data, error } = parseConfig('columns:\n  - Backlog\n stray\n');
+    assert.deepEqual(data, {});
+    assert.match(error, /^line 3: /);
   });
 
   it('keeps nested settings and comments-free values', () => {
@@ -274,6 +296,8 @@ describe('parser: unresolved Git conflict markers', () => {
     const rec = parseItem('items/STORY-000014.md', conflicted);
     assert.ok(rec.errors.some((e) => /Unresolved Git conflict markers/.test(e)), rec.errors.join('; '));
     assert.equal(rec.meta.id, 'STORY-000014', 'the rest of the file is still read');
+    assert.equal(rec.meta.priority, 'high', 'only the "ours" side is read, so the strict parser sees no duplicate key');
+    assert.equal(rec.errors.length, 1, rec.errors.join('; '));
   });
 
   it('reports a half-merged config file as an error instead of parsing it quietly', () => {

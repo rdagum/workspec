@@ -162,6 +162,85 @@ describe('yaml: parseYaml structure', () => {
   });
 });
 
+describe('yaml: parseYaml is strict (lossless-or-loud)', () => {
+  /** Assert that parsing throws and the message names the given 1-based line. */
+  function assertRejects(text, line, pattern, options) {
+    let error = null;
+    try {
+      parseYaml(text, options);
+    } catch (err) {
+      error = err;
+    }
+    assert.ok(error, `should throw: ${JSON.stringify(text)}`);
+    assert.match(error.message, new RegExp(`^line ${line}: `), error.message);
+    assert.equal(error.line, line);
+    if (pattern) assert.match(error.message, pattern);
+    return error;
+  }
+
+  it('throws on a line indented deeper than its mapping instead of dropping the rest', () => {
+    // REVIEW-2026-09 §4 finding 1: this used to parse to { id, type } and lose title/status.
+    const err = assertRejects('id: STORY-000001\ntype: STORY\n   oops: 1\ntitle: t\nstatus: Ready', 3, /unexpected indentation/);
+    assert.match(err.message, /"oops: 1"/, 'the message quotes the offending line');
+    assertRejects('custom:\n  a: 1\n    b: 2\n  c: 3', 3, /unexpected indentation/);
+  });
+
+  it('throws on a line that is not a key/value pair', () => {
+    assertRejects('a: 1\njust some text\nb: 2', 2, /expected a "key: value" pair/);
+    assertRejects('a: 1\n: no key\n', 2, /expected a "key: value" pair/);
+    assertRejects('a: 1\n...\n', 2);
+  });
+
+  it('throws on a sequence entry where a key was expected', () => {
+    assertRejects('a: 1\n- stray\nb: 2', 2, /sequence entry/);
+  });
+
+  it('throws on a duplicate key, naming both lines', () => {
+    assertRejects('a: 1\nb: 2\na: 3', 3, /duplicate key "a" \(first set on line 1\)/);
+    assertRejects('m:\n  k: 1\n  k: 2', 3, /duplicate key "k"/);
+  });
+
+  it('throws on a key indented less than the first one', () => {
+    assertRejects('  a: 1\n  b: 2\nc: 3', 3, /unexpected indentation/);
+  });
+
+  it('throws on a deeper line inside a sequence (misaligned entry or multi-line plain scalar)', () => {
+    assertRejects('labels:\n  - a\n    - b', 3, /inside a sequence/);
+    assertRejects('labels:\n  - first part\n    continued', 3, /inside a sequence/);
+  });
+
+  it('throws on a non-key line under a sequence', () => {
+    assertRejects('labels:\n  - a\n  stray text\nb: 1', 3, /unexpected indentation/);
+  });
+
+  it('throws on a block scalar line indented less than its first line', () => {
+    assertRejects('a: |\n    one\n  two\nb: 1', 3, /block scalar/);
+  });
+
+  it('adds lineOffset to every reported line', () => {
+    assertRejects('a: 1\n  b: 2', 3, /unexpected indentation/, { lineOffset: 1 });
+  });
+
+  it('reads an indentless sequence (key and dashes in the same column)', () => {
+    assert.deepEqual(parseYaml('labels:\n- a\n- b\nnext: 1'), { labels: ['a', 'b'], next: 1 });
+    assert.deepEqual(parseYaml('steps:\n- name: a\n  tags:\n  - x\n- name: b'), {
+      steps: [{ name: 'a', tags: ['x'] }, { name: 'b' }],
+    });
+  });
+
+  it('reads a top-level sequence document', () => {
+    assert.deepEqual(parseYaml('- alice\n- handle: bjorn\n  name: Bjorn'), ['alice', { handle: 'bjorn', name: 'Bjorn' }]);
+  });
+
+  it('aligns a mapping with its first key when the dash is followed by several spaces', () => {
+    assert.deepEqual(parseYaml('s:\n  -   a: 1\n      b: 2'), { s: [{ a: 1, b: 2 }] });
+  });
+
+  it('reads a sequence nested under a bare dash', () => {
+    assert.deepEqual(parseYaml('s:\n  -\n    - a\n    - b'), { s: [['a', 'b']] });
+  });
+});
+
 describe('yaml: parseYaml block scalars', () => {
   it('reads a literal block with a single trailing newline (clip)', () => {
     assert.deepEqual(parseYaml('a: |\n  one\n  two\nb: 1'), { a: 'one\ntwo\n', b: 1 });

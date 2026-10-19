@@ -6,7 +6,7 @@
 // that WorkSpec work items use:
 //   - scalar values (strings, numbers, booleans, null, dates-as-strings)
 //   - quoted scalars (single/double)
-//   - block sequences ("- item")
+//   - block sequences ("- item"), indented or in the key's column
 //   - inline flow sequences ("[a, b, c]" and "[]")
 //   - inline flow mappings ("{ block: 1, owner: rdagum }" and "{}")
 //   - either flow form wrapped onto lines indented below its key, as editors
@@ -18,6 +18,8 @@
 //   - preserve field order              -> objects keep insertion order
 //   - preserve unknown fields           -> nothing is dropped
 //   - avoid unnecessary normalization   -> values round-trip as written
+//   - lossless or loud                  -> input outside the subset throws a
+//                                          `line N:` error, never skipped
 //
 // For the most sensitive operation (drag/drop status change) callers should use
 // `patchScalarLine` which edits a single line of raw text and touches nothing
@@ -148,25 +150,41 @@ function flowDepth(s) {
   return depth;
 }
 
+const isSkippable = (line) => line.trim() === '' || line.trimStart().startsWith('#');
+const isDash = (content) => content.startsWith('- ') || content === '-';
+
 /**
  * Parse a YAML document (the front-matter block, without the `---` fences)
  * into a plain object whose key order matches the source.
+ *
+ * The parser is strict: anything it does not understand throws an Error whose
+ * message starts with `line N:` (and whose `line` property is N), instead of
+ * being skipped. A silently skipped line would be dropped by the next save.
+ * `options.lineOffset` is added to every reported line number, so a caller
+ * parsing front matter can report positions in the whole file.
  */
-function parseYaml(text) {
+function parseYaml(text, options = {}) {
+  const offset = options.lineOffset || 0;
   const lines = text.split(/\r?\n/);
+  const source = lines.slice(); // parseSequence rewrites lines; errors quote the original
   let idx = 0;
 
+  function fail(i, message) {
+    const shown = source[i].trim();
+    const snippet = shown.length > 60 ? `${shown.slice(0, 57)}...` : shown;
+    const err = new Error(`line ${i + 1 + offset}: ${message}: "${snippet}"`);
+    err.line = i + 1 + offset;
+    return err;
+  }
+
+  function significantIndex(from) {
+    for (let j = from; j < lines.length; j++) if (!isSkippable(lines[j])) return j;
+    return -1;
+  }
+
   function nextSignificant() {
-    let j = idx;
-    while (j < lines.length) {
-      const l = lines[j];
-      if (l.trim() === '' || l.trimStart().startsWith('#')) {
-        j++;
-        continue;
-      }
-      return l;
-    }
-    return null;
+    const j = significantIndex(idx);
+    return j === -1 ? null : lines[j];
   }
 
   // A flow collection may run over several lines: an editor that wraps at a
@@ -206,6 +224,8 @@ function parseYaml(text) {
       const ci = indentOf(line);
       if (ci <= parentIndent) break;
       if (contentIndent === null) contentIndent = ci;
+      // Slicing at the first line's indent would cut into this line's text.
+      if (ci < contentIndent) throw fail(idx, 'block scalar line is indented less than its first line');
       collected.push(line.slice(contentIndent));
       idx++;
     }
@@ -222,21 +242,25 @@ function parseYaml(text) {
     const arr = [];
     while (idx < lines.length) {
       const line = lines[idx];
-      if (line.trim() === '' || line.trimStart().startsWith('#')) {
+      if (isSkippable(line)) {
         idx++;
         continue;
       }
       const ci = indentOf(line);
       if (ci < seqIndent) break;
+      // A deeper line here is a continuation this subset cannot represent
+      // (a multi-line plain scalar, or a misaligned "- " entry).
+      if (ci > seqIndent) throw fail(idx, 'unexpected indentation inside a sequence');
       const content = line.slice(ci);
-      if (!content.startsWith('- ') && content !== '-') break;
+      if (!isDash(content)) break; // the parent's next key, checked by the parent
       const itemBody = content.slice(1).trim();
       idx++;
       if (itemBody === '') {
         // Nested structure under the dash.
         const nxt = nextSignificant();
         if (nxt && indentOf(nxt) > seqIndent) {
-          arr.push(parseMapping(indentOf(nxt)));
+          const ni = indentOf(nxt);
+          arr.push(isDash(nxt.slice(ni)) ? parseSequence(ni) : parseMapping(ni));
         } else {
           arr.push(null);
         }
@@ -244,9 +268,9 @@ function parseYaml(text) {
         // Inline "- key: value" starts a mapping at the dash's content column.
         // A flow collection ("- { a: 1 }", "- [a, b]") is a scalar to parseScalar.
         idx--; // re-read this line as a mapping, treating the dash area as indent
-        const mapIndent = ci + 2;
+        const mapIndent = ci + content.indexOf(itemBody); // "-   key: v" aligns with key
         // Rewrite current line so the mapping parser sees plain indentation.
-        lines[idx] = ' '.repeat(mapIndent) + content.slice(2);
+        lines[idx] = ' '.repeat(mapIndent) + itemBody;
         arr.push(parseMapping(mapIndent));
       } else {
         arr.push(parseScalar(itemBody));
@@ -257,23 +281,27 @@ function parseYaml(text) {
 
   function parseMapping(mapIndent) {
     const obj = {};
+    const firstLine = {}; // key -> line index, for the duplicate-key message
     while (idx < lines.length) {
       const line = lines[idx];
-      if (line.trim() === '' || line.trimStart().startsWith('#')) {
+      if (isSkippable(line)) {
         idx++;
         continue;
       }
       const ci = indentOf(line);
       if (ci < mapIndent) break;
-      if (ci > mapIndent) break; // malformed; let caller handle
+      if (ci > mapIndent) throw fail(idx, 'unexpected indentation');
       const content = line.slice(ci);
-      if (content.startsWith('- ')) break; // sequence belongs to a parent key
+      // Entries of a sequence under a key are consumed with that key, so a
+      // dash reaching this point has no key to belong to.
+      if (isDash(content)) throw fail(idx, 'sequence entry where a "key: value" pair was expected');
       const kv = splitKeyValue(content);
-      if (!kv) {
-        idx++;
-        continue;
-      }
+      if (!kv || kv.key === '') throw fail(idx, 'expected a "key: value" pair');
       const { key, rest } = kv;
+      if (Object.prototype.hasOwnProperty.call(firstLine, key)) {
+        throw fail(idx, `duplicate key "${key}" (first set on line ${firstLine[key] + 1 + offset})`);
+      }
+      firstLine[key] = idx;
       idx++;
 
       if (rest === '|' || rest === '>' || rest === '|-' || rest === '>-' || rest === '|+' || rest === '>+') {
@@ -296,7 +324,8 @@ function parseYaml(text) {
         while (lines[idx] !== nxt) idx++;
         idx++;
         obj[key] = parseScalar(readFlow(ncontent, ci));
-      } else if (ni > ci && (ncontent.startsWith('- ') || ncontent === '-')) {
+      } else if (ni >= ci && isDash(ncontent)) {
+        // ni === ci is an "indentless" sequence (`key:\n- a`), as PyYAML writes it.
         obj[key] = parseSequence(ni);
       } else if (ni > ci) {
         obj[key] = parseMapping(ni);
@@ -307,9 +336,15 @@ function parseYaml(text) {
     return obj;
   }
 
-  const first = nextSignificant();
-  if (!first) return {};
-  return parseMapping(indentOf(first));
+  const start = significantIndex(0);
+  if (start === -1) return {};
+  const topIndent = indentOf(lines[start]);
+  const result = isDash(lines[start].slice(topIndent)) ? parseSequence(topIndent) : parseMapping(topIndent);
+  // Anything left over sits outside the top-level collection (e.g. a key
+  // indented less than the first one) and would otherwise be dropped.
+  const leftover = significantIndex(idx);
+  if (leftover !== -1) throw fail(leftover, 'unexpected indentation');
+  return result;
 }
 
 function needsQuoting(s) {

@@ -26,6 +26,26 @@ function hasConflictMarkers(text) {
 
 const CONFLICT_MESSAGE = 'Unresolved Git conflict markers (<<<<<<< / >>>>>>>) in this file; resolve the merge first.';
 
+/**
+ * The "ours" side of a conflicted text: marker lines and the base/theirs
+ * sections become blank lines, so the strict YAML parser can still read the
+ * rest (with line numbers unchanged) while the conflict itself is reported.
+ */
+function oursSide(text) {
+  let section = 'normal';
+  return String(text)
+    .split(/\r?\n/)
+    .map((line) => {
+      if (/^<{7}(?: |$)/.test(line)) section = 'ours';
+      else if (/^\|{7}(?: |$)/.test(line) && section === 'ours') section = 'base';
+      else if (/^={7}$/.test(line) && section !== 'normal') section = 'theirs';
+      else if (/^>{7}(?: |$)/.test(line) && section !== 'normal') section = 'normal';
+      else if (section === 'normal' || section === 'ours') return line;
+      return '';
+    })
+    .join('\n');
+}
+
 // Canonical field order (SPEC.md §8) used when emitting brand-new items.
 const CANONICAL_ORDER = [
   'id', 'type', 'title',
@@ -59,17 +79,19 @@ function parseItem(path, raw) {
   const { frontMatter, body } = splitDocument(raw);
   record.body = body || '';
 
-  // A half-merged file would otherwise parse "successfully": the YAML engine
-  // skips marker lines (no colon) and the body keeps them as text.
-  if (hasConflictMarkers(raw)) record.errors.push(CONFLICT_MESSAGE);
+  // A half-merged file is an error even when its "ours" side parses; the body
+  // would otherwise keep the markers as text without anyone noticing.
+  const conflicted = hasConflictMarkers(raw);
+  if (conflicted) record.errors.push(CONFLICT_MESSAGE);
 
   if (frontMatter === null) {
     record.errors.push('Missing YAML front matter (expected a leading `---` block).');
     return record;
   }
 
+  // Line 1 of the file is the opening fence, so front-matter line N is file line N + 1.
   try {
-    record.meta = parseYaml(frontMatter) || {};
+    record.meta = parseYaml(conflicted ? oursSide(frontMatter) : frontMatter, { lineOffset: 1 }) || {};
   } catch (err) {
     record.errors.push(`YAML parse error: ${err.message}`);
     return record;
@@ -109,7 +131,7 @@ function validateItem(record, workflowStatuses = null) {
 function parseConfig(text) {
   const conflict = hasConflictMarkers(text) ? CONFLICT_MESSAGE : null;
   try {
-    return { data: parseYaml(text) || {}, error: conflict };
+    return { data: parseYaml(conflict ? oursSide(text) : String(text)) || {}, error: conflict };
   } catch (err) {
     return { data: {}, error: conflict ? `${conflict} ${err.message}` : err.message };
   }
