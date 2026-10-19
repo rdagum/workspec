@@ -629,6 +629,36 @@ describe('yaml: patchScalarLine', () => {
     assert.equal(out, '---\nstatus_note: x\nstatus: Done\n---\n');
   });
 
+  it('patches the top-level key, never a nested one that comes first', () => {
+    // REVIEW-2026-09 §4 finding 9: `^\s*status:` used to hit agent.status.
+    const text = '---\nid: TASK-000001\nagent:\n  status: running\n  runs: []\nstatus: Backlog\n---\n\nbody\n';
+    assert.equal(
+      patchScalarLine(text, 'status', 'Done'),
+      '---\nid: TASK-000001\nagent:\n  status: running\n  runs: []\nstatus: Done\n---\n\nbody\n'
+    );
+    assert.equal(patchScalarLine('---\nagent:\n  status: running\n---\n', 'status', 'Done'), null, 'no top-level key: no patch');
+  });
+
+  it('anchors at the top-level column of a uniformly indented front matter', () => {
+    assert.equal(patchScalarLine('---\n  id: X\n  m:\n    status: a\n  status: b\n---\n', 'status', 'c'), '---\n  id: X\n  m:\n    status: a\n  status: c\n---\n');
+  });
+
+  it('keeps CRLF line endings and a BOM byte-identical', () => {
+    const text = '\uFEFF---\r\nid: X\r\nstatus: Backlog\r\n---\r\n\r\nstatus: body\r\n';
+    assert.equal(patchScalarLine(text, 'status', 'Done'), '\uFEFF---\r\nid: X\r\nstatus: Done\r\n---\r\n\r\nstatus: body\r\n');
+    // With a BOM the opening fence is still recognised, so a body line is never reached.
+    assert.equal(patchScalarLine('\uFEFF---\nid: X\n---\nstatus: body\n', 'status', 'Done'), null);
+  });
+
+  it('keeps a trailing comment on the patched line', () => {
+    assert.equal(patchScalarLine('---\nstatus: Backlog # set by hand\n---\n', 'status', 'Done'), '---\nstatus: Done # set by hand\n---\n');
+    assert.equal(patchScalarLine('---\nstatus: "a # b"\n---\n', 'status', 'Done'), '---\nstatus: Done\n---\n');
+  });
+
+  it('treats the key literally, not as a pattern', () => {
+    assert.equal(patchScalarLine('---\nxyz: 1\nx.z: 2\n---\n', 'x.z', 3), '---\nxyz: 1\nx.z: 3\n---\n');
+  });
+
   it('round-trips through the parser with the new value', () => {
     const out = patchScalarLine(file, 'status', 'Review');
     const { frontMatter } = splitDocument(out);

@@ -554,31 +554,40 @@ function joinDocument(frontMatterText, body) {
  * front-matter text without touching anything else. Used for drag/drop so that
  * "no other changes are allowed" (PROMPT.md §4.5) is honoured literally.
  * Returns the new full file text, or null if the key line was not found.
+ *
+ * Only a key in the top-level column matches (column 0, or the column of the
+ * first key in a uniformly indented front matter), so a nested `agent.status`
+ * is never patched instead of `status`. Line endings and a trailing comment
+ * on the patched line are kept.
  */
 function patchScalarLine(fileText, key, newValue) {
   const { frontMatter } = splitDocument(fileText);
   if (frontMatter === null) return null;
-  const lines = fileText.split(/\r?\n/);
-  // Locate the closing fence so we only touch the front matter region.
-  let fenceCount = 0;
-  let endFence = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (/^---[ \t]*$/.test(lines[i])) {
-      fenceCount++;
-      if (fenceCount === 2) {
-        endFence = i;
-        break;
-      }
+  const parts = fileText.split(/(\r?\n)/); // lines at even indices, their endings at odd ones
+  const line = (i) => parts[2 * i];
+  const count = (parts.length + 1) / 2;
+  // Line 0 is the opening fence (possibly after a BOM); stop at the closing one.
+  let end = count;
+  for (let i = 1; i < count; i++) {
+    if (/^---[ \t]*$/.test(line(i))) {
+      end = i;
+      break;
     }
   }
-  const limit = endFence === -1 ? lines.length : endFence;
-  const re = new RegExp(`^(\\s*${key}\\s*:)(\\s.*)?$`);
-  for (let i = 1; i < limit; i++) {
-    if (re.test(lines[i])) {
-      const m = lines[i].match(re);
-      lines[i] = `${m[1]} ${serializeScalar(newValue)}`;
-      return lines.join('\n');
-    }
+  let topIndent = null;
+  for (let i = 1; i < end && topIndent === null; i++) {
+    if (!isSkippable(line(i))) topIndent = indentOf(line(i));
+  }
+  if (topIndent === null) return null;
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^( {${topIndent}}${escaped}[ \\t]*:)(?=\\s|$)(.*)$`);
+  for (let i = 1; i < end; i++) {
+    const m = line(i).match(re);
+    if (!m) continue;
+    const old = m[2].trim();
+    const comment = old.slice(stripComment(old).length).trim();
+    parts[2 * i] = `${m[1]} ${serializeScalar(newValue)}${comment ? ` ${comment}` : ''}`;
+    return parts.join('');
   }
   return null;
 }

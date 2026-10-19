@@ -247,6 +247,13 @@ describe('parser: changeStatus', () => {
     assert.match(out, /^status: Review$/m);
   });
 
+  it('moves the item, not a nested agent.status that precedes the top-level key', () => {
+    const raw = GOOD.replace('status: Ready\n', 'agent:\n  status: running\nstatus: Ready\n');
+    const out = changeStatus(parseItem('items/STORY-000042.md', raw), 'Done');
+    assert.equal(out, raw.replace('\nstatus: Ready\n', '\nstatus: Done\n'));
+    assert.ok(out.includes('  status: running'));
+  });
+
   it('quotes a status that needs quoting', () => {
     const rec = parseItem('items/STORY-000042.md', GOOD);
     assert.match(changeStatus(rec, 'yes'), /^status: "yes"$/m);
