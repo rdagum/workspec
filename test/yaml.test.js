@@ -60,6 +60,19 @@ describe('yaml: parseYaml scalars', () => {
     });
   });
 
+  it('decodes every double-quoted escape', () => {
+    assert.deepEqual(
+      parseYaml('a: "back\\\\slash"\nb: "tab\\there"\nc: "cr\\r"\nd: "\\x41\\u00e9\\U0001F600"\ne: "\\/\\0\\ "'),
+      { a: 'back\\slash', b: 'tab\there', c: 'cr\r', d: 'A\u00e9\u{1F600}', e: '/\0 ' }
+    );
+  });
+
+  it('keeps an unknown escape literally, so a hand-written "C:\\path" survives', () => {
+    assert.equal(parseYaml('a: "C:\\path"').a, 'C:\\path');
+    const once = stringifyYaml({ a: 'C:\\path: x' });
+    assert.equal(stringifyYaml(parseYaml(once)), once);
+  });
+
   it('keeps quoted values that look like other types as strings', () => {
     assert.deepEqual(parseYaml('a: "true"\nb: "null"\nc: "42"\nd: "~"\ne: "007"\nf: "[]"'), {
       a: 'true', b: 'null', c: '42', d: '~', e: '007', f: '[]',
@@ -408,6 +421,35 @@ describe('yaml: stringifyYaml', () => {
   it('escapes double quotes inside quoted strings', () => {
     assert.equal(stringifyYaml({ a: 'say: "hi"' }), 'a: "say: \\"hi\\""');
     assertStable({ a: 'say: "hi"' });
+  });
+
+  it('parseScalar and serializeScalar are exact inverses for backslash, quote, newline and tab', () => {
+    // REVIEW-2026-09 §4 finding 4: a quoted backslash used to double on every save.
+    const values = [
+      'C:\\Users\\rdagum: home', // backslash in a value that must be quoted
+      'trailing backslash: \\', '"\\n" is not a newline: x', '" \\" ',
+      'say: "hi"', 'tab\there: x', 'cr\rlf: x', 'nul\0: x', 'bell\x07: x',
+      'a: b\\c "d" \te',
+    ];
+    for (const v of values) {
+      const text = stringifyYaml({ v });
+      assert.match(text, /^v: "/, `quoted: ${text}`);
+      assert.equal(parseYaml(text).v, v, `inverse failed for ${JSON.stringify(v)} via ${text}`);
+      // A second round trip writes the identical text: nothing grows per save.
+      assert.equal(stringifyYaml(parseYaml(text)), text);
+    }
+    // Sequence items have no block form, so a newline is escaped there.
+    assert.equal(stringifyYaml({ s: ['one\ntwo'] }), 's:\n  - "one\\ntwo"');
+    assertStable({ s: ['one\ntwo', 'tab\tx', 'back\\slash: x'] });
+  });
+
+  it('writes the escapes it reads', () => {
+    assert.equal(stringifyYaml({ a: 'x\ty: z' }), 'a: "x\\ty: z"');
+    assert.equal(stringifyYaml({ a: 'x\\y: z' }), 'a: "x\\\\y: z"');
+    assert.equal(stringifyYaml({ a: 'x\x01' }), 'a: "x\\x01"');
+    // A plain backslash needs no quoting and is written as is.
+    assert.equal(stringifyYaml({ a: 'C:\\path\\to' }), 'a: C:\\path\\to');
+    assertStable({ a: 'C:\\path\\to', b: '\\', c: '\\\\', d: 'x\\"' });
   });
 
   it('emits multi-line strings as literal blocks', () => {

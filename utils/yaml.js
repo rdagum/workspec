@@ -79,15 +79,40 @@ function stripComment(s) {
   return s;
 }
 
+// Double-quoted escapes (YAML 1.2 §5.7). serializeScalar emits a subset of
+// these and parseScalar decodes all of them, so the two are exact inverses.
+const UNESCAPE = {
+  '\\': '\\', '"': '"', '/': '/', ' ': ' ', '\t': '\t',
+  n: '\n', t: '\t', r: '\r', 0: '\0', a: '\x07', b: '\b', e: '\x1b', f: '\f', v: '\v',
+  N: '\u0085', _: '\u00a0', L: '\u2028', P: '\u2029',
+};
+const ESCAPE = { '\\': '\\\\', '"': '\\"', '\n': '\\n', '\t': '\\t', '\r': '\\r', '\0': '\\0' };
+
+/**
+ * Decode the body of a double-quoted scalar. An unknown escape such as the
+ * `\p` of a hand-written "C:\path" is kept literally rather than rejected;
+ * the serializer then writes it back as `\\p`, which reads as the same value.
+ */
+function unescapeDouble(body) {
+  return body.replace(/\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[\s\S])/g, (m, e) => {
+    if (e.length > 1) return String.fromCodePoint(parseInt(e.slice(1), 16));
+    return Object.prototype.hasOwnProperty.call(UNESCAPE, e) ? UNESCAPE[e] : m;
+  });
+}
+
+function escapeDouble(s) {
+  return s.replace(/[\\"\x00-\x1f\x7f]/g, (c) => ESCAPE[c] || `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+}
+
 function parseScalar(raw) {
   const s = raw.trim();
   if (s === '' || s === '~' || s === 'null') return null;
   if (s === 'true') return true;
   if (s === 'false') return false;
 
-  // Quoted strings — strip the quotes, keep the literal contents.
+  // Quoted strings — strip the quotes and decode the escapes.
   if (isQuoted(s) && s[0] === '"') {
-    return s.slice(1, -1).replace(/\\"/g, '"').replace(/\\n/g, '\n');
+    return unescapeDouble(s.slice(1, -1));
   }
   if (isQuoted(s) && s[0] === "'") {
     return s.slice(1, -1).replace(/''/g, "'");
@@ -396,6 +421,7 @@ function parseYaml(text, options = {}) {
 function needsQuoting(s) {
   if (s === '') return true;
   if (/^[\s]|[\s]$/.test(s)) return true; // leading/trailing whitespace
+  if (/[\x00-\x1f\x7f]/.test(s)) return true; // tab, newline, CR, other controls: escaped
   if (/^[-?:,\[\]{}#&*!|>'"%@`]/.test(s)) return true; // reserved leading chars
   if (/:\s|\s#/.test(s)) return true; // ": " or " #" inside
   if (/^(true|false|null|~|yes|no|on|off)$/i.test(s)) return true;
@@ -409,7 +435,7 @@ function serializeScalar(value) {
   if (typeof value === 'number') return String(value);
   const s = String(value);
   if (needsQuoting(s)) {
-    return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    return '"' + escapeDouble(s) + '"';
   }
   return s;
 }

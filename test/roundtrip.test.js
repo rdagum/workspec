@@ -100,6 +100,17 @@ describe('fixtures: values the round trip alone cannot pin down', () => {
     assert.deepEqual(custom.tags, ['alpha', 'beta']);
     assert.equal(custom.note, 'block text # inside a block this is content\n');
   });
+
+  it('quoted.md: escapes decode to single characters, so nothing grows on save', () => {
+    const meta = parsed('quoted.md');
+    assert.equal(meta.escaped_quote, 'He said: "hi"');
+    assert.equal(meta.escaped_backslash, 'C:\\Users\\rdagum: home');
+    assert.equal(meta.escaped_trailing_backslash, 'ends with: \\');
+    assert.equal(meta.escaped_tab, 'tab\tseparated');
+    assert.equal(meta.escaped_mixed, 'quote " backslash \\ tab \t end: here');
+    assert.deepEqual(meta.escaped_items, ['line one\nline two', 'tab\there']);
+    assert.equal(meta.plain_backslash, 'C:\\path\\to\\file');
+  });
 });
 
 describe('fixtures: round trip through parseItem / serializeItem', () => {
@@ -116,7 +127,9 @@ describe('fixtures: round trip with CRLF line endings', () => {
       const rec = roundTrip(name, withCrlf(raw));
       const lf = parseItem(`items/${name}`, raw.replace(/\r\n/g, '\n'));
       assert.deepEqual(rec.meta, lf.meta, `${name} parses differently with CRLF`);
-      assert.equal(JSON.stringify(rec.meta).includes('\\r'), false, `${name} leaked a CR into a value`);
+      // Check the values themselves: JSON text would also match a backslash before an "r" (C:\rdagum).
+      const hasCr = (v) => (typeof v === 'string' ? v.includes('\r') : v !== null && typeof v === 'object' && Object.values(v).some(hasCr));
+      assert.equal(hasCr(rec.meta), false, `${name} leaked a CR into a value`);
     });
   }
 });

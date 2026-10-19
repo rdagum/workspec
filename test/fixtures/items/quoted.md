@@ -46,6 +46,14 @@ starts_with_quote: "'single' inside double"
 colon_space: "key: value inside"
 space_hash: "value # with a hash"
 escaped_quote: "He said: \"hi\""
+escaped_backslash: "C:\\Users\\rdagum: home"
+escaped_trailing_backslash: "ends with: \\"
+escaped_tab: "tab\tseparated"
+escaped_mixed: "quote \" backslash \\ tab \t end: here"
+escaped_items:
+  - "line one\nline two"
+  - "tab\there"
+plain_backslash: C:\path\to\file
 ---
 
 # Summary
