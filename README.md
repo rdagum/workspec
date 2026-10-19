@@ -332,8 +332,12 @@ complete work-item files (every scalar form, block scalars, nested namespaces,
 comments, CRLF line endings, a BOM). Each one must parse without errors and
 round-trip through `parseItem` → `serializeItem` content-equal to the source;
 see `test/helpers.js` for the exact definition. When you fix a data-handling
-defect, add a fixture that reproduces it. Fixtures are byte-exact inputs, so
-`.gitattributes` disables line-ending conversion for them.
+defect, add a fixture that reproduces it. Two smaller corpora sit beside it:
+`test/fixtures/reformat/` holds valid files the serializer rewrites in its own
+layout without changing a value (flow collections, indentless sequences), and
+`test/fixtures/lossy/` holds files the round-trip guard must flag (see "Notes &
+limits"). Fixtures are byte-exact inputs, so `.gitattributes` disables
+line-ending conversion for them.
 
 ## What you can do
 
@@ -664,6 +668,7 @@ test/             node --test suite (not loaded by the browser)
                   roundtrip runs the fixture corpus; theme checks the
                   style.css palettes' contrast
   fixtures/items/ complete work-item files that must round-trip unchanged
+  fixtures/reformat/, fixtures/lossy/   reformatted-but-equal and guard-flagged files
 
 tools/            node CLIs (zero dependencies; reuse test/load.js)
   lib.js          Node filesystem adapter + repository loader for the tools
@@ -682,6 +687,8 @@ tools/            node CLIs (zero dependencies; reuse test/load.js)
 - YAML field order and unknown fields/namespaces are preserved on save.
 - Only the file you edited is rewritten — no batch normalization.
 - Drag/drop performs a surgical single-line edit of `status:`.
+- Front matter the serializer would not reproduce is never re-serialized: it is
+  edited as raw YAML and saved verbatim (see "Notes & limits").
 - IDs are immutable, zero-padded to six digits, formatted `TYPE-000123`.
 - A new ID is never one that another working copy could also generate when
   `id_allocation.strategy: block` is on; the app refuses rather than guesses.
@@ -690,9 +697,31 @@ tools/            node CLIs (zero dependencies; reuse test/load.js)
 ## Notes & limits
 
 The bundled YAML engine implements the subset WorkSpec uses (scalars, quoted
-strings, block/flow sequences, nested mappings, block scalars). Standalone YAML
-comments inside front matter are not preserved across a *metadata* re-serialize;
-a drag/drop status change preserves the file byte-for-byte except the one line.
+strings, block/flow sequences and mappings, nested mappings, literal block
+scalars). It is **lossless or loud**: a line it cannot place — indented deeper
+than its mapping, not a `key: value` pair, a duplicate key, a `{...}` that is
+not a mapping — is an error that names the file line (`YAML parse error: line
+4: unexpected indentation: "oops: 1"`), never silently skipped. Such an item
+shows its error on the card and is never re-serialized from the form.
+
+Comments inside front matter, standalone or trailing (`priority: high #
+urgent`), are not part of any value and are not preserved across a *metadata*
+re-serialize; a drag/drop status change preserves the file byte-for-byte
+except the one line (a trailing comment on that line is kept).
+
+**Round-trip guard.** On load every item is checked: would writing its front
+matter back through the serializer change what it says? The check compares
+structure, not text, so the serializer's own layout is fine — indentation,
+quote style, flow versus block collections, comments. It flags content that
+would change: anchors, aliases and tags (`&a`, `*a`, `!!str`), which this
+engine reads as plain text; folded `>` blocks; integers written another way
+(`007`); unclosed brackets (`[WIP] title`); nested sequences. A flagged item
+carries a warning naming the first differing field, opens in the editor as
+**Raw YAML only**, and is saved verbatim — the text you see, with the file's
+BOM, fences and line endings kept — never re-serialized. Drag/drop still works
+when the file has a top-level `status:` line. An item that fails to parse, or
+still has Git conflict markers, is handled the same way. Fix the YAML in the
+raw view and, once it round-trips, the form view comes back.
 
 ## License
 

@@ -253,3 +253,19 @@ describe('model: half-merged files never load as valid', () => {
     assert.ok(model.items.get('items/STORY-000003.md').errors.some((e) => /conflict markers/.test(e)));
   });
 });
+
+describe('model: the sample repository .workspec-demo', () => {
+  // STORY-000001 definition of done: the strict YAML engine and the round-trip
+  // guard must not reject or flag anything in the demo repository.
+  const { NodeWorkspecFS, collectProblems } = require('../tools/lib.js');
+  const path = require('node:path');
+  const { ROOT } = require('./load.js');
+
+  it('loads with zero errors, and no item is lossy', async () => {
+    const model = await loadRepository(new NodeWorkspecFS(path.join(ROOT, '.workspec-demo')));
+    assert.ok(model.items.size > 0);
+    assert.deepEqual(collectProblems(model).filter((p) => p.level === 'error'), []);
+    assert.deepEqual([...model.items.values()].filter((r) => r.lossy).map((r) => r.path), []);
+    assert.ok(model.templates.length > 0);
+  });
+});

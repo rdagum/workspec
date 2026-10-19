@@ -10,4 +10,4 @@ Every step ships its own fixture/test. No new dependencies; browser code path un
 - [x] 4. Multi-line strings without trailing newline serialize as `|-`; with trailing newline stay `|`. Fixture + round-trip test.
 - [x] 5. `patchScalarLine` anchors the key at column 0 (nested `agent.status` never patched). Test.
 - [x] 6. Round-trip guard: `parseItem` computes `record.lossy` (content differs after `stringifyYaml(parseYaml(fm))` with whitespace/comment lines/quote style normalized). `store.saveItem` and `ui/editor.js` honour it: lossy items open raw-YAML only and save raw text verbatim. Tests in `test/parser.test.js` / `test/store.test.js`.
-- [ ] 7. Docs: README "Notes & limits" describes the round-trip guard; demo repo `.workspec-demo` still loads with zero errors (test). Full gates.
+- [x] 7. Docs: README "Notes & limits" describes the round-trip guard; demo repo `.workspec-demo` still loads with zero errors (test). Full gates.
