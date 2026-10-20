@@ -20,7 +20,7 @@ that lacks `message.usage` treated as a skip rather than a crash.
   predicate that `summarize` now also uses. `itemSpend(record, model)` returns `itemUsage` or, for an item with no
   `agent.runs`, the all-zero state with the budget resolved (the pre-run gate needs "$0 spent of $10", not null).
   `roundUsd(n)` rounds to at most four decimals. Tests in `test/usage.test.js`.
-- [ ] 2. Transcript adapter `tools/transcript.js`: locate a session from a `.jsonl` path or a session id (search
+- [x] 2. Transcript adapter `tools/transcript.js`: locate a session from a `.jsonl` path or a session id (search
   `$CLAUDE_CONFIG_DIR|~/.claude/projects/*` for every directory whose name starts with the repository's encoded path,
   case-insensitively, because routine runs write to `…--claude-worktrees-<name>`), list `<session>/subagents/agent-*.jsonl`,
   and `aggregateTranscript(files, { since, until, branch })` → per model, one count per distinct `message.id` (largest value
