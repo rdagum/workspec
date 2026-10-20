@@ -68,8 +68,11 @@ spend() {
 }
 
 # The repository's own usage-report.js and what it loads, untracked in the
-# clone, as in a checkout of a repository that ships the tools.
+# clone, as in a checkout of a repository that ships the tools. Only WorkSpec
+# itself ships them; elsewhere the cases that need them are skipped.
 REPO=$(cd "$here/../../../.." && pwd)
+HAVE_USAGE_TOOLS=""
+if [ -f "$REPO/tools/usage-report.js" ] && command -v node > /dev/null 2>&1; then HAVE_USAGE_TOOLS=1; fi
 with_usage_tools() {
   mkdir -p test && cp -r "$REPO/tools" "$REPO/core" "$REPO/utils" . && cp "$REPO/test/load.js" test/
 }
@@ -159,21 +162,25 @@ printf -- '---\r\nid: TASK-000009\r\ntitle: CRLF item\r\nstatus: Ready\r\npriori
 publish
 expect "CRLF item is parsed" id TASK-000009
 
-setup; item TASK-000001 Ready Opus critical; spend TASK-000001 5 6
-item TASK-000002 Ready Opus medium; spend TASK-000002 5 1; publish; with_usage_tools
-expect "over budget: under-budget item picked" id TASK-000002
-expect_skip "over budget: reason" 'TASK-000001.*over budget (\$6 of \$5)'
-
-setup; item TASK-000001 Ready Opus high; spend TASK-000001 5 5; publish; with_usage_tools
-expect "budget exactly spent: nothing eligible" id ""
-expect_skip "budget exactly spent: reason" "TASK-000001.*over budget"
-
 setup; item TASK-000001 Ready Opus high; spend TASK-000001 5 6; publish
 expect "no usage-report.js: no budget gate" id TASK-000001
 
-setup; item TASK-000001 Ready Opus high; spend TASK-000001 5 1; publish; with_usage_tools
-spend TASK-000001 5 9   # spent in the stale working tree only, not on origin
-expect "budget is read from origin, not the checkout" id TASK-000001
+if [ -n "$HAVE_USAGE_TOOLS" ]; then
+  setup; item TASK-000001 Ready Opus critical; spend TASK-000001 5 6
+  item TASK-000002 Ready Opus medium; spend TASK-000002 5 1; publish; with_usage_tools
+  expect "over budget: under-budget item picked" id TASK-000002
+  expect_skip "over budget: reason" 'TASK-000001.*over budget (\$6 of \$5)'
+
+  setup; item TASK-000001 Ready Opus high; spend TASK-000001 5 5; publish; with_usage_tools
+  expect "budget exactly spent: nothing eligible" id ""
+  expect_skip "budget exactly spent: reason" "TASK-000001.*over budget"
+
+  setup; item TASK-000001 Ready Opus high; spend TASK-000001 5 1; publish; with_usage_tools
+  spend TASK-000001 5 9   # spent in the stale working tree only, not on origin
+  expect "budget is read from origin, not the checkout" id TASK-000001
+else
+  echo "skip budget gate cases: this repository does not ship tools/usage-report.js"
+fi
 
 echo
 echo "$pass passed, $fail failed"
