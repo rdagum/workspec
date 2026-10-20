@@ -41,6 +41,13 @@ the item.
 - **Never widen the scope.** Implement the item's requirements and acceptance
   criteria. Anything else you notice becomes a new WorkSpec item in
   `.workspec/items/` at `status: Backlog` — not an extra commit.
+- **Never start an item whose AI budget is spent.** The selector skips one. If
+  you are pointed at an item directly instead, check it yourself with
+  `node tools/usage-report.js <ID> --json` (when the repository ships it); when
+  `remaining` is at or below zero, do not claim it or write code: open a draft
+  PR titled `[over budget] <type>(<scope>): <title> (<ID>)` from a branch that
+  holds only the plan (step 3), saying what spent the budget and what the work
+  would still take, leave the item's status as it is, and report.
 
 ## Step 0 — Preflight, review queue, then a worktree only if there is work
 
@@ -76,7 +83,10 @@ The script is the sole authority on which item to take. It picks the highest
 - have an `assignee` that names a model (`fable`, `opus`, `sonnet`, `haiku`,
   case-insensitive);
 - have every `depends_on` item satisfied;
-- have no branch yet.
+- have no branch yet;
+- are not over budget: when the repository ships `tools/usage-report.js`, an
+  item whose `remaining` budget is at or below zero is skipped as
+  "over budget". Without that tool there is no budget gate.
 
 A dependency is satisfied when it is `Done`, or when it is in `Review` with its
 `workspec/<id>-*` branch pushed, meaning its PR is open but not merged yet.
@@ -109,7 +119,10 @@ would expect to have been picked ahead of the chosen one, **say so in the final
 report with the reason**, e.g. "TASK-000027 (high) was skipped: blocked by
 STORY-000081, which is in Review". Silently taking a lower-priority item looks
 like a sorting bug. A dependency sitting in `Review` whose work is already
-merged is the common case; name it so the user can move it to `Done`.
+merged is the common case; name it so the user can move it to `Done`. Always
+name an item skipped as "over budget", with its figures, whatever its
+priority: it will never be picked again until the user raises its
+`agent.budget_usd` or re-scopes it.
 
 **Get into a worktree** — only now that a selector has named work. For a new
 item, `<id>` is its id and `<start>` is `origin/$base_branch`. A linked
@@ -276,9 +289,24 @@ the end of this step.
 **Record the AI usage on the item — every run, no exceptions.** WorkSpec tracks
 agent cost per item under `agent.runs`
 (https://github.com/rdagum/workspec#tracking-ai-usage), and its validator flags
-an agent-assigned item that reaches `Review` without a run. The script sums
-this session's transcript and its subagent transcripts per model, so an
-orchestrating Fable run and the Opus subagent it delegated to become two runs:
+an agent-assigned item that reaches `Review` without a run. Both recorders below
+sum this session's transcript and its subagent transcripts per model, so an
+orchestrating Fable run and the Opus subagent it delegated to become two runs.
+
+**When the repository ships `tools/record-usage.js`, use it, and record once,
+at the end** (below, after the PR url is in `context`), not here:
+
+```bash
+node tools/record-usage.js <ID> --from-transcript=<session-uuid> --ref=<PR url>
+```
+
+It splits cache writes into the five-minute and one-hour kinds, which are
+priced differently, and refuses a second run for the same session and model, so
+it cannot be re-run to update totals. Pass the session uuid, not `--branch`:
+the rows from before the branch existed belong to the run too. The project's
+`workspec-project-gates` skill may say more.
+
+**Otherwise** record with the routine's own script, now and again at the end:
 
 ```bash
 python .claude/skills/workspec-daily-work/scripts/record_usage.py .workspec/items/<ID>.md --session <session-uuid>
@@ -315,9 +343,11 @@ The PR body covers:
   Backlog items you filed.
 - Ends with the Claude Code attribution line.
 
-Then append the PR url to the item's `context`, re-run `record_usage.py` so
-the run reflects the whole session, commit and push. A run that reaches step 8
-without an `agent.runs` entry for this session on the item is incomplete.
+Then append the PR url to the item's `context`, record the usage —
+`tools/record-usage.js` with `--ref=<PR url>` for the first and only time, or a
+re-run of `record_usage.py` so the run reflects the whole session — commit and
+push. A run that reaches step 8 without an `agent.runs` entry for this session
+on the item is incomplete.
 
 **Last, publish the review status** on the integration branch. This is what
 lets the next run start an item that depends on this one, stacked on this
@@ -365,7 +395,10 @@ Never abandon work. Commit what exists, push the branch, and open a **draft** PR
 titled `[blocked] <type>(<scope>): <title> (<ID>)`, against `$base_branch`,
 stating exactly which step failed and the error output. Leave the item at
 `In Progress` (do not publish `Review`, so nothing gets stacked on blocked work)
-and add `blocked` to its `labels` on the feature branch. Then run step 7 in full — a killed run must not leave orphaned
+and add `blocked` to its `labels` on the feature branch. Record the session's
+usage on the item as in step 6, with the draft PR's url as `--ref`, commit and
+push: a blocked run spent tokens too, and the transcript will not wait for the
+next attempt. Then run step 7 in full — a killed run must not leave orphaned
 dev servers behind — and report the blockage.
 
 ## Scheduling

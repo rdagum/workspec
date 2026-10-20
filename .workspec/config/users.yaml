@@ -3,8 +3,14 @@ users:
     handle: rdagum
   - name: Fable Agent
     handle: Fable
+    kind: agent
+    model: claude-fable-5-1
   - name: Opus Agent
     handle: Opus
+    kind: agent
+    model: claude-opus-5-5
   - name: Sonnet Agent
     handle: Sonnet
+    kind: agent
+    model: claude-sonnet-5-5
 

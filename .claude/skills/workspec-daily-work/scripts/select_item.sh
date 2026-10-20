@@ -15,6 +15,10 @@
 # publishes its claim and review status commits, so a stale local checkout
 # cannot hide them. Without that ref the working tree is read instead.
 #
+# An item whose AI budget is spent (WorkSpec "Tracking AI usage") is skipped as
+# "over budget". The repository's own tools/usage-report.js decides, run with
+# node against that same .workspec; a repository without it has no budget gate.
+#
 # Prints "NONE\t<reason>" or a "key\tvalue" block for the winner, followed by
 # the runners-up on stderr so the caller can report what it skipped.
 set -euo pipefail
@@ -117,6 +121,37 @@ ensure_ref() {
 
 is_ancestor() { git merge-base --is-ancestor "$1" "$2" 2>/dev/null; }
 
+# Budget gate. The report tool comes from the checkout; the data it reads is
+# the .workspec of $ref, exported once to a temp directory.
+BUDGET_TOOL=""
+BUDGET_DIR=.workspec
+if [ -f tools/usage-report.js ] && command -v node > /dev/null 2>&1; then
+  BUDGET_TOOL=tools/usage-report.js
+  if [ -n "$ref" ]; then
+    export_dir=$(mktemp -d)
+    trap 'rm -rf "$export_dir"' EXIT
+    git archive "$ref" .workspec | tar -x -C "$export_dir" 2>/dev/null || true
+    BUDGET_DIR="$export_dir/.workspec"
+    # MSYS_NO_PATHCONV (above) also stops Git Bash from translating this /tmp
+    # path for node.exe, so translate it here.
+    if command -v cygpath > /dev/null 2>&1; then BUDGET_DIR=$(cygpath -m "$BUDGET_DIR"); fi
+  fi
+fi
+
+# Prints "$<spent> of $<budget>" when the item's remaining budget is at or
+# below zero, nothing otherwise (no tool, no budget, unpriced, unknown id).
+over_budget() {
+  [ -n "$BUDGET_TOOL" ] || return 0
+  { node "$BUDGET_TOOL" "$1" "$BUDGET_DIR" --json 2>/dev/null || true; } | node -e '
+    let s = "";
+    process.stdin.on("data", (d) => (s += d)).on("end", () => {
+      try {
+        const r = JSON.parse(s);
+        if (r.remaining != null && r.remaining <= 0) process.stdout.write("$" + r.spent + " of $" + r.budget);
+      } catch {}
+    });' || true
+}
+
 candidates=""
 skipped=""
 
@@ -193,6 +228,12 @@ while IFS= read -r f; do
     fi
     base_branch="$tip"
     stacked_on="$tip_id"
+  fi
+
+  # Last, because it starts node: the cheaper checks have already run.
+  spent=$(over_budget "$id")
+  if [ -n "$spent" ]; then
+    skipped="$skipped$id\tover budget ($spent)\n"; continue
   fi
 
   created=$(get "$fm" created); : "${created:=9999-99-99}"
