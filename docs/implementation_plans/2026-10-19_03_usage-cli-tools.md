@@ -34,7 +34,7 @@ that lacks `message.usage` treated as a skip rather than a crash.
   the append goes through `appendRunText`, falling back to a full re-serialize (said on stderr) only when the line-level
   edit is impossible and the record is not lossy; an unknown ID and a duplicate `source`+`session`+`model` exit 1 (the latter
   unless `--force`) before anything is written. Exit codes as in `validate-workspec.js`.
-- [ ] 4. `tools/usage-report.js`: repository mode (totals + optional `--by`, `--since`, `--until`, `--json`, `--strict` →
+- [x] 4. `tools/usage-report.js`: repository mode (totals + optional `--by`, `--since`, `--until`, `--json`, `--strict` →
   exit 1 when any item is over budget) and item mode (`ID [PATH]`: spent, budget, remaining, over-budget; an EPIC reports
   its roll-up); `--json` shape documented in the header comment and covered by a test.
 - [ ] 5. Tests in `test/tools.test.js`: both tools as child processes against throwaway repositories — byte-identical manual
