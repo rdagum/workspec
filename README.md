@@ -347,7 +347,9 @@ line-ending conversion for them.
   that one file is rewritten — nothing else is touched.
 - **Editor** — click a card for a split view: structured metadata form (with a
   raw-YAML toggle) on the left, Markdown editor/preview on the right. An unsaved
-  indicator shows pending changes; save with the **Save** button or **Ctrl+S**
+  indicator shows pending changes; **Save** writes the file and closes the
+  editor (it stays open if the save fails), **Ctrl+S** writes it and keeps the
+  editor open
   (pending edits are also flushed automatically when you switch items or close).
   Only the single file is written; field order and unknown fields are preserved.
   Dragging the card you have open to another column updates the editor too: with

@@ -10,7 +10,8 @@
 //
 // Typing updates an in-memory working copy and refreshes only the small status
 // strip in place — it never re-renders the editor, so input focus is preserved.
-// Writing to disk is explicit: the Save button (or Ctrl+S), with a save-on-close
+// Writing to disk is explicit: the Save button (which also closes the editor)
+// or Ctrl+S (which keeps it open), with a save-on-close
 // safety net so edits are never lost. Field order and unknown fields are
 // preserved by always working from a clone of the source `meta` and only
 // overwriting the keys the form manages.
@@ -297,8 +298,8 @@ class EditorView {
     const m = this.meta;
     const saveBtn = el('button', {
       class: 'btn-save',
-      title: 'Save (Ctrl+S)',
-      onclick: () => this.save(),
+      title: 'Save and close (Ctrl+S saves and stays open)',
+      onclick: () => this._saveAndClose(),
       text: 'Save',
     });
     saveBtn.disabled = !this._dirty;
@@ -877,6 +878,15 @@ class EditorView {
     } finally {
       this._saving = false;
     }
+  }
+
+  /**
+   * The Save button: save, then close the editor. A save that fails leaves the
+   * editor open with its buffer (the toast says why); it does not fall into the
+   * Save / Discard / Cancel prompt, since the user asked to save, not to leave.
+   */
+  async _saveAndClose() {
+    if (await this.save()) this.store.close();
   }
 
   /**
