@@ -58,6 +58,22 @@ branch() {
 
 run() { bash "$SELECT" 2> "$root/stderr" || true; }
 
+# spend <id> <budget_usd> <cost_usd>: give the item a budget and one run.
+spend() {
+  awk -v b="$2" -v c="$3" '{ print }
+    /^created:/ { print "agent:"; print "  budget_usd: " b; print "  runs:"
+                  print "    - date: 2026-10-09"; print "      handle: Opus"
+                  print "      model: claude-opus-5-5"; print "      cost_usd: " c }' \
+    ".workspec/items/$1.md" > "$root/spend.tmp" && mv "$root/spend.tmp" ".workspec/items/$1.md"
+}
+
+# The repository's own usage-report.js and what it loads, untracked in the
+# clone, as in a checkout of a repository that ships the tools.
+REPO=$(cd "$here/../../../.." && pwd)
+with_usage_tools() {
+  mkdir -p test && cp -r "$REPO/tools" "$REPO/core" "$REPO/utils" . && cp "$REPO/test/load.js" test/
+}
+
 expect() {
   local label=$1 key=$2 want=$3 got
   got=$(run | awk -F'\t' -v k="$key" '$1 == k { print $2; exit }')
@@ -142,6 +158,22 @@ setup; item TASK-000001 Ready Opus high; publish
 printf -- '---\r\nid: TASK-000009\r\ntitle: CRLF item\r\nstatus: Ready\r\npriority: critical\r\nassignee: Opus\r\ncreated: 2026-10-01\r\ndepends_on: []\r\n---\r\n' > .workspec/items/TASK-000009.md
 publish
 expect "CRLF item is parsed" id TASK-000009
+
+setup; item TASK-000001 Ready Opus critical; spend TASK-000001 5 6
+item TASK-000002 Ready Opus medium; spend TASK-000002 5 1; publish; with_usage_tools
+expect "over budget: under-budget item picked" id TASK-000002
+expect_skip "over budget: reason" 'TASK-000001.*over budget (\$6 of \$5)'
+
+setup; item TASK-000001 Ready Opus high; spend TASK-000001 5 5; publish; with_usage_tools
+expect "budget exactly spent: nothing eligible" id ""
+expect_skip "budget exactly spent: reason" "TASK-000001.*over budget"
+
+setup; item TASK-000001 Ready Opus high; spend TASK-000001 5 6; publish
+expect "no usage-report.js: no budget gate" id TASK-000001
+
+setup; item TASK-000001 Ready Opus high; spend TASK-000001 5 1; publish; with_usage_tools
+spend TASK-000001 5 9   # spent in the stale working tree only, not on origin
+expect "budget is read from origin, not the checkout" id TASK-000001
 
 echo
 echo "$pass passed, $fail failed"
