@@ -19,6 +19,9 @@ const {
   formatTokens,
   usageSummaryLines,
   summarize,
+  summarizeBy,
+  itemSpend,
+  roundUsd,
   rollup,
   appendRunText,
   usageIssues,
@@ -315,6 +318,101 @@ describe('usage: rollup', () => {
     const self = rollup(modelOf(records), 'STORY-000004');
     assert.equal(self.members, 1);
     assert.equal(self.cost, 5);
+  });
+});
+
+describe('usage: summarizeBy', () => {
+  // model-b: output $5 per million, so runB(date, 1000000) costs $5.
+  const records = [
+    item('EPIC-000001', { status: 'Done', agent: { runs: [runB('2026-09-01', 1000000, { model: 'model-a', cost_usd: '0.5' })] } }),
+    item('STORY-000001', {
+      parent: 'EPIC-000001',
+      assignee: 'Fable',
+      labels: ['ui', 'tooling', 'ui'],
+      agent: { runs: [runB('2026-09-02', 1000000), runB('2026-09-20', 2000000, { model: 'model-a', cost_usd: '1' })] },
+    }),
+    item('TASK-000001', { parent: 'STORY-000001', assignee: 'Opus', labels: ['ui'], agent: { runs: [runB('2026-09-03', 1000000)] } }),
+    item('BUG-000001', { status: 'Done', agent: { runs: [runB('2026-09-04', 3000000)] } }),
+    item('STORY-000002', { parent: 'EPIC-000001', labels: ['ui'] }),
+  ];
+  const model = modelOf(records);
+  const rows = (by, opts) => summarizeBy(model, by, opts).map((g) => [g.key, g.items, g.runs, g.cost]);
+
+  it('groups by status, assignee and type with the summarize totals shape', () => {
+    assert.deepEqual(rows('status'), [['Done', 2, 2, 15.5], ['Backlog', 2, 3, 11]]);
+    assert.deepEqual(rows('assignee'), [['', 2, 2, 15.5], ['Fable', 1, 2, 6], ['Opus', 1, 1, 5]]);
+    assert.deepEqual(rows('type'), [['BUG', 1, 1, 15], ['STORY', 1, 2, 6], ['TASK', 1, 1, 5], ['EPIC', 1, 1, 0.5]]);
+    const [done] = summarizeBy(model, 'status');
+    assert.deepEqual(Object.keys(done), ['key', 'items', 'runs', 'tokens', 'totalTokens', 'cost', 'knownCost', 'priced', 'unpricedRuns']);
+    assert.equal(done.tokens.output, 4000000);
+  });
+
+  it('puts an item in every label group it names, and unlabelled items under ""', () => {
+    assert.deepEqual(rows('label'), [['', 2, 2, 15.5], ['ui', 2, 3, 11], ['tooling', 1, 2, 6]]);
+  });
+
+  it('groups by nearest epic, an epic under itself, none under ""', () => {
+    assert.deepEqual(rows('epic'), [['', 1, 1, 15], ['EPIC-000001', 3, 4, 11.5]]);
+  });
+
+  it('groups by model per run, counting items with a run on that model', () => {
+    assert.deepEqual(rows('model'), [['model-b', 3, 3, 25], ['model-a', 2, 2, 1.5]]);
+    assert.deepEqual(rows('model', { since: '2026-09-10' }), [['model-a', 1, 1, 1]]);
+  });
+
+  it('honours since/until and an explicit record list', () => {
+    assert.deepEqual(rows('status', { since: '2026-09-02', until: '2026-09-03' }), [['Backlog', 2, 2, 10], ['Done', 2, 0, 0]]);
+    assert.deepEqual(rows('status', { records: [records[3]] }), [['Done', 1, 1, 15]]);
+  });
+
+  it('sorts an unpriced group by its known part and keeps cost null', () => {
+    const extra = item('STORY-000003', { status: 'Review', agent: { runs: [runB('2026-09-05', 1, { model: 'mystery' }), runB('2026-09-05', 4000000)] } });
+    const groups = summarizeBy(modelOf([...records, extra]), 'status');
+    assert.deepEqual(groups.map((g) => g.key), ['Review', 'Done', 'Backlog']);
+    assert.equal(groups[0].cost, null);
+    assert.equal(groups[0].knownCost, 20);
+    assert.equal(groups[0].unpricedRuns, 1);
+  });
+
+  it('throws on an unknown dimension, naming the valid ones', () => {
+    assert.throws(() => summarizeBy(model, 'handle'), /Unknown grouping "handle"; expected one of status, assignee, model, type, label, epic/);
+  });
+});
+
+describe('usage: itemSpend and roundUsd', () => {
+  it('is itemUsage for an item with runs', () => {
+    const rec = item('STORY-000001', { agent: { runs: [runB('2026-09-02', 1000000)] } });
+    const model = modelOf([rec]);
+    assert.deepEqual(itemSpend(rec, model), itemUsage(rec, model));
+  });
+
+  it('is zero spent of the resolved budget for an item without runs', () => {
+    const rec = item('STORY-000001');
+    const s = itemSpend(rec, modelOf([rec]));
+    assert.deepEqual(s, {
+      runs: 0,
+      tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0 },
+      totalTokens: 0,
+      cost: 0,
+      priced: true,
+      budget: 10,
+      remaining: 10,
+      overBudget: false,
+      models: [],
+      handles: [],
+    });
+    assert.equal(itemSpend(item('TASK-000001'), modelOf([])).remaining, null);
+    assert.equal(itemSpend({ meta: null }, modelOf([])), null);
+    assert.equal(itemSpend(null, modelOf([])), null);
+  });
+
+  it('rounds to at most four decimals and keeps null', () => {
+    assert.equal(roundUsd(0.1 + 0.2), 0.3);
+    assert.equal(roundUsd(1.23456), 1.2346);
+    assert.equal(roundUsd(-0.00001), 0);
+    assert.equal(roundUsd(7), 7);
+    assert.equal(roundUsd(null), null);
+    assert.equal(roundUsd(NaN), null);
   });
 });
 

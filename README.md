@@ -336,7 +336,8 @@ defect, add a fixture that reproduces it. Two smaller corpora sit beside it:
 `test/fixtures/reformat/` holds valid files the serializer rewrites in its own
 layout without changing a value (flow collections, indentless sequences), and
 `test/fixtures/lossy/` holds files the round-trip guard must flag (see "Notes &
-limits"). Fixtures are byte-exact inputs, so `.gitattributes` disables
+limits"); `test/fixtures/transcripts/` holds synthetic session transcripts
+for `tools/record-usage.js`. Fixtures are byte-exact inputs, so `.gitattributes` disables
 line-ending conversion for them.
 
 ## What you can do
@@ -623,23 +624,103 @@ leaves the item where it is, and reports. After, on every exit path: append one
 run per model before the pull request merges. Two branches that append to one
 item conflict at the same line; keep both.
 
-The command-line tools ship with STORY-001002: `tools/record-usage.js` appends
-a run — by hand, or from a Claude Code session transcript including its
-subagents — with a line-level edit that leaves every other line of the file
-untouched (re-serializing would drop quotes, comments and flow style and
-cause merge conflicts), and `tools/usage-report.js` prints totals by status,
-assignee, model, type, label or epic, or one item's spent, budget and
-remaining. A transcript is read once per distinct `message.id` — one API
-response is logged as several rows with the same usage block, so summing rows
-over-reports several-fold — and a session's `subagents/` files are included,
-because the implementing model is often a subagent. Transcripts are pruned
-after a retention period, so record soon. The
-board already shows the cost chip on cards (leave `cost` out of
-`settings.card_fields` in `board.yaml` to hide it); the editor section and the
-sidebar totals ship with STORY-001003. `.workspec-demo/` carries an `ai.yaml`
-with Claude list prices and three items with runs — one over budget, one
-unpriced, one with a recorded cost — so the chip can be seen without waiting
-for a real run.
+**Recording and reporting.** Two zero-dependency tools do this from the command
+line, with the same `--key=value` syntax as the other tools. `record-usage`
+appends a run — typed in by hand, or imported from a Claude Code session
+transcript including its subagents:
+
+```
+# by hand (only the token counts you give are written; --source defaults to manual)
+node tools/record-usage.js STORY-000012 --handle=Opus --model=claude-opus-5-5 \
+     --input=2 --output=8000 --cache-read=900000 --cache-write=40000 \
+     --purpose=implement --session=c08bb153-… --dry-run
+
+# from a transcript: a session id (looked up under ~/.claude/projects for this
+# repository, worktree folders included) or the path of the .jsonl file
+node tools/record-usage.js STORY-000012 --from-transcript=c08bb153-da05-4380-a295-7b0fd56f92c5
+node tools/record-usage.js --from-transcript=c08bb153-… --item-from-branch   # ID from a workspec/<id>-… branch
+node tools/record-usage.js STORY-000012 --from-transcript=c08bb153-… --branch=workspec/story-000012-x --since=2026-10-19
+```
+
+The append is a line-level edit (`appendRunText`): every other line of the file
+stays byte-identical, line endings and a BOM are kept, and `updated` is not
+touched — re-serializing would drop quotes, comments and flow style and cause
+merge conflicts. Only when that edit is impossible (`agent` or `runs` written in
+flow style, say) is the front matter re-serialized, and the tool says so on
+stderr; an item the serializer would rewrite lossily is refused instead.
+`--dry-run` prints exactly the lines that would be inserted. A run whose
+`source`, `session` and `model` are already on the item is refused (exit 1,
+nothing written) unless `--force`, so importing a session twice cannot
+double-count it; an unknown ID is refused too.
+
+A transcript is read once per distinct `message.id`: one API response is logged
+as several rows that repeat the same usage block, so summing rows over-reports
+several-fold. `<synthetic>` rows and rows without usage are skipped, and a
+session's `subagents/agent-*.jsonl` files are included (leave them out with
+`--no-subagents`) because the implementing model is often a subagent. One run is
+written per model, with `source: claude-code`, `session` set to the session id
+and the cache writes split into five-minute and one-hour. The handle comes from
+the `users.yaml` entry whose `model` matches, else the entry whose handle occurs
+in the model ID, else the model family (`--handle=H` overrides). `--since`,
+`--until` and `--branch` keep only some rows; when they drop any, the runs are
+marked `estimated: true`. Transcripts are pruned after a retention period, so
+record soon, and a session is complete only when it ends — record once, at the
+end.
+
+`usage-report` derives the same numbers the board shows:
+
+```
+node tools/usage-report.js [PATH] [--by=status|assignee|model|type|label|epic] [--since=DATE] [--until=DATE] [--json] [--strict]
+node tools/usage-report.js ID [PATH] [--json] [--strict]
+```
+
+Without an ID it prints the repository's totals, optionally grouped
+(`.workspec-demo/` has runs to try it on; an item counts under each of its
+labels, so label groups overlap, and a blank group is shown as `(none)`):
+
+```
+$ node tools/usage-report.js .workspec-demo --by=status
+AI usage: 3 item(s) with runs, 4 run(s)
+Cost:    unpriced ($5.67 known, 1 unpriced run)
+Tokens:  in 28 · out 69.6k · cache read 3.2M · cache write 147k
+Over budget: STORY-000002
+
+status       items  runs  tokens             cost
+Review           1     2    2.9M            $5.25
+Backlog          1     1  122.6k            $0.42
+In Progress      1     1    438k  $0.00+ unpriced
+```
+
+With an ID it prints that item's spent, budget and remaining — the budget gate
+an agent runs before starting (an item without runs has spent nothing; an epic
+reports its roll-up against its own budget):
+
+```
+$ node tools/usage-report.js STORY-000001
+STORY-000001 — A1: Make the YAML engine lossless-or-loud (Done)
+  spent      $19.87 (list-price equivalent)
+  budget     $10.00
+  remaining  -$9.87 (over budget)
+  runs       2 (claude-opus-5-5, claude-sonnet-5-5)
+  tokens     in 660 · out 79.2k · cache read 67.3M · cache write 1M
+```
+
+`--json` prints one object that a script can read; for an item the keys are
+`scope` (`item`, or `rollup` for an epic), `id`, `title`, `status`, `assignee`,
+`runs`, `tokens`, `totalTokens`, `spent`, `budget`, `remaining`, `overBudget`,
+`priced`, `models` and `handles` (amounts rounded to at most four decimals;
+`spent` and `remaining` are `null` when a run is unpriced, `budget` and
+`remaining` when there is no budget), and for the repository `scope`, `since`,
+`until`, `totals`, `by`, `groups` and `overBudget`. For example
+`node tools/usage-report.js STORY-000012 --json` and read `remaining`. `--strict`
+exits 1 when the item — or, without an ID, any item — is over budget. Exit codes
+follow `validate-workspec.js`: 0 ok, 1 refused or over budget under `--strict`,
+2 could not load or bad arguments. Archived items are not loaded, so they are in
+no report. The board shows the cost chip on cards (leave `cost` out of
+`settings.card_fields` in `board.yaml` to hide it), an editor section and sidebar
+totals. `.workspec-demo/` carries an `ai.yaml` with Claude list prices and three
+items with runs — one over budget, one unpriced, one with a recorded cost — so
+all of this can be seen without waiting for a real run.
 
 ## Project layout
 
@@ -673,16 +754,20 @@ utils/
 test/             node --test suite (not loaded by the browser)
   load.js         evaluates the scripts above in Node against a stub window
   helpers.js      fixture discovery + the "content-equal" comparison
-  *.test.js       yaml, ids, parser, allocation, model, store and tools tests;
-                  roundtrip runs the fixture corpus; theme checks the
-                  style.css palettes' contrast
+  *.test.js       yaml, ids, parser, allocation, usage, model, store, transcript
+                  and tools tests; roundtrip runs the fixture corpus; theme checks
+                  the style.css palettes' contrast
   fixtures/items/ complete work-item files that must round-trip unchanged
   fixtures/reformat/, fixtures/lossy/   reformatted-but-equal and guard-flagged files
+  fixtures/transcripts/   synthetic Claude Code session + subagent transcripts for record-usage
 
 tools/            node CLIs (zero dependencies; reuse test/load.js)
   lib.js          Node filesystem adapter + repository loader for the tools
   validate-workspec.js   the board's checks from the command line; non-zero exit on errors
   renumber.js     move one item to a new ID and rewrite every reference
+  record-usage.js append AI-usage runs to an item, by hand or from a Claude Code transcript
+  usage-report.js repository totals (grouped) or one item's spent / budget / remaining
+  transcript.js   Claude Code transcript reader for record-usage (the one Claude-specific file)
 
 .githooks/        pre-commit: validate the staged .workspec (git config core.hooksPath .githooks)
 .github/workflows/validate-workspec.yml   tests + validator on push and PR merge result
