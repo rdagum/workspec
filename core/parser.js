@@ -102,6 +102,7 @@ function parseItem(path, raw) {
   } catch (err) {
     record.errors.push(`YAML parse error: ${err.message}`);
     record.lossy = true;
+    record.parseFailed = true;
     return record;
   }
 
@@ -124,6 +125,9 @@ const LOSSY_MESSAGE =
 
 /** Populate record.errors / record.warnings per the validation rules (PROMPT.md §10). */
 function validateItem(record, workflowStatuses = null) {
+  // Nothing was read from a file whose YAML failed to parse, so "missing
+  // field" errors would only bury the real parse error.
+  if (record.parseFailed) return record;
   const meta = record.meta;
   for (const field of REQUIRED_FIELDS) {
     if (meta[field] === undefined || meta[field] === null || meta[field] === '') {
