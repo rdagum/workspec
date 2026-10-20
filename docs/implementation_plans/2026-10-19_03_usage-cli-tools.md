@@ -14,7 +14,7 @@ the tools parse arguments, read files and print. The Claude Code transcript form
 WorkSpec's, so it lives in a single Node-only module, `tools/transcript.js`, with every field name in one table and a row
 that lacks `message.usage` treated as a skip rather than a crash.
 
-- [ ] 1. Core: group-by and per-item helpers in `core/usage.js`. `summarizeBy(model, by, { records, since, until })` for
+- [x] 1. Core: group-by and per-item helpers in `core/usage.js`. `summarizeBy(model, by, { records, since, until })` for
   `status | assignee | model | type | label | epic` (a label puts an item in every group it names; epic is the nearest
   epic, an epic's own runs sit under itself, `''` is "none"), built on the existing totals buckets and a shared date-range
   predicate that `summarize` now also uses. `itemSpend(record, model)` returns `itemUsage` or, for an item with no

@@ -7,7 +7,8 @@
 // implementation. Nothing derived here is ever written back to a file.
 //
 // Layers, top to bottom: configuration (parseAiConfig), per-run and per-item
-// derivation (runCost, itemUsage), aggregation (summarize, rollup), the
+// derivation (runCost, itemUsage, itemSpend), aggregation (summarize,
+// summarizeBy, rollup), the
 // line-level append every writer of runs uses (appendRunText) and the
 // repository checks with their README codes (usageIssues, validateUsage).
 
@@ -274,6 +275,19 @@ function bucket(map, key) {
 }
 
 /**
+ * Whether a run's date lies in [since, until] (YYYY-MM-DD, inclusive). With
+ * neither bound every run is in; with either, a run without a valid date is out.
+ */
+function inPeriod(run, since, until) {
+  if (since == null && until == null) return true;
+  const date = run.date == null ? '' : String(run.date);
+  if (!DATE_RE.test(date)) return false;
+  if (since != null && date < since) return false;
+  if (until != null && date > until) return false;
+  return true;
+}
+
+/**
  * Totals over `records` (default: every item in the model):
  *   { items, runs, tokens: {kind: n}, totalTokens, cost, knownCost, priced,
  *     unpricedRuns, byStatus: {status: totals}, byHandle: {handle: totals},
@@ -297,12 +311,7 @@ function summarize(model, records, { since = null, until = null } = {}) {
     const status = bucket(byStatus, record.meta.status);
     status.items++;
     for (const run of runs) {
-      if (since != null || until != null) {
-        const date = run.date == null ? '' : String(run.date);
-        if (!DATE_RE.test(date)) continue;
-        if (since != null && date < since) continue;
-        if (until != null && date > until) continue;
-      }
+      if (!inPeriod(run, since, until)) continue;
       const cost = runCost(run, ai);
       addRun(totals, run, cost);
       addRun(status, run, cost);
@@ -312,6 +321,116 @@ function summarize(model, records, { since = null, until = null } = {}) {
   }
   for (const map of [byStatus, byHandle, byModel]) for (const t of Object.values(map)) finishTotals(t);
   return Object.assign(finishTotals(totals), { byStatus, byHandle, byModel });
+}
+
+/** Dimensions summarizeBy groups on, in the order the tools list them. */
+const SUMMARY_DIMENSIONS = ['status', 'assignee', 'model', 'type', 'label', 'epic'];
+
+/** Non-empty labels of an item, each once; a scalar counts as one label. */
+function labelsOf(meta) {
+  const v = meta.labels;
+  const list = Array.isArray(v) ? v : v != null && v !== '' ? [v] : [];
+  return [...new Set(list.filter((l) => l != null && l !== '').map(String))];
+}
+
+/**
+ * Totals grouped by one dimension, as [{ key, ...totals }] in the summarize()
+ * totals shape, most expensive first (an unpriced group by its known part),
+ * ties by key. `key` is '' for "none" (no assignee, no label, no epic); the
+ * tools decide how to display it.
+ *   status / assignee / type  the item's field
+ *   label   one group per label, so an item with several labels counts in each
+ *           and the groups overlap
+ *   epic    the nearest epic on the parent chain; an epic's own runs sit under
+ *           its own ID
+ *   model   per run, not per item; `items` counts the records with at least
+ *           one run in the period on that model
+ * Records without `agent.runs` are skipped. `since` / `until` as in summarize.
+ * Throws on an unknown dimension.
+ */
+function summarizeBy(model, by, { records = null, since = null, until = null } = {}) {
+  if (!SUMMARY_DIMENSIONS.includes(by)) {
+    throw new Error(`Unknown grouping "${by}"; expected one of ${SUMMARY_DIMENSIONS.join(', ')}.`);
+  }
+  const ai = model && model.ai;
+  const list = records ? [...records] : model && model.items ? [...model.items.values()] : [];
+  // core/model.js loads after this file, so epicIndex is looked up at call
+  // time rather than taken from WS when the module is evaluated.
+  const epics = by === 'epic' ? WS.epicIndex(model) : null;
+  const groups = {};
+  const modelItems = {};
+
+  const keysOf = (record) => {
+    const meta = record.meta;
+    if (by === 'label') {
+      const labels = labelsOf(meta);
+      return labels.length ? labels : [''];
+    }
+    if (by === 'epic') {
+      if (WS.isEpic(record)) return [meta.id];
+      return [(epics.epicsOf.get(record.path) || [])[0]];
+    }
+    return [meta[by]];
+  };
+
+  for (const record of list) {
+    const runs = runsOf(record && record.meta);
+    if (!runs) continue;
+    if (by === 'model') {
+      for (const run of runs) {
+        if (!inPeriod(run, since, until)) continue;
+        const group = bucket(groups, run.model);
+        addRun(group, run, runCost(run, ai));
+        const k = run.model == null ? '' : String(run.model);
+        (modelItems[k] = modelItems[k] || new Set()).add(record);
+      }
+      continue;
+    }
+    for (const key of keysOf(record)) {
+      const group = bucket(groups, key);
+      group.items++;
+      for (const run of runs) if (inPeriod(run, since, until)) addRun(group, run, runCost(run, ai));
+    }
+  }
+  for (const [k, set] of Object.entries(modelItems)) groups[k].items = set.size;
+
+  const amount = (t) => (t.cost != null ? t.cost : t.knownCost);
+  return Object.entries(groups)
+    .map(([key, totals]) => Object.assign({ key }, finishTotals(totals)))
+    .sort((a, b) => amount(b) - amount(a) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/**
+ * Spend of one item for a budget gate: itemUsage when it has `agent.runs`,
+ * otherwise the same shape at zero with the budget resolved ("$0 spent of
+ * $10", not "unknown"). Null only for a record without usable metadata.
+ */
+function itemSpend(record, model) {
+  if (!record || !isMapping(record.meta)) return null;
+  const usage = itemUsage(record, model);
+  if (usage) return usage;
+  const tokens = {};
+  for (const [kind] of TOKEN_KINDS) tokens[kind] = 0;
+  const budget = resolveBudget(record.meta, model && model.ai);
+  return {
+    runs: 0,
+    tokens,
+    totalTokens: 0,
+    cost: 0,
+    priced: true,
+    budget,
+    remaining: budget,
+    overBudget: false,
+    models: [],
+    handles: [],
+  };
+}
+
+/** A derived amount rounded to at most four decimals for output; null stays null. */
+function roundUsd(n) {
+  if (n == null || !Number.isFinite(n)) return null;
+  const r = Math.round(n * 1e4) / 1e4;
+  return r === 0 ? 0 : r;
 }
 
 /**
@@ -715,6 +834,10 @@ Object.assign(WS, {
   resolveBudget,
   itemUsage,
   summarize,
+  SUMMARY_DIMENSIONS,
+  summarizeBy,
+  itemSpend,
+  roundUsd,
   rollup,
   USAGE_PERIODS,
   periodRange,
