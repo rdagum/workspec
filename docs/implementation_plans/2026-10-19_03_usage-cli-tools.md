@@ -28,7 +28,7 @@ that lacks `message.usage` treated as a skip rather than a crash.
   `usage.cache_creation`, rows trimmed by a filter counted, item ID derived from `workspec/<id>-…` branch names. Fixture
   corpus `test/fixtures/transcripts/` (synthetic): repeated rows per `message.id`, a `<synthetic>` row, a row without usage,
   a malformed line, two branches, a `subagents/` directory with its own model.
-- [ ] 3. `tools/record-usage.js`: manual mode (`--handle --model` plus optional tokens, `--cost`, `--purpose`, `--ref`,
+- [x] 3. `tools/record-usage.js`: manual mode (`--handle --model` plus optional tokens, `--cost`, `--purpose`, `--ref`,
   `--session`, `--date`, `--source`, `--estimated`) and `--from-transcript` mode (`--no-subagents`, `--since`, `--until`,
   `--branch`, `--item-from-branch`, `--handle` override); `--dry-run` prints the lines exactly as they would be inserted;
   the append goes through `appendRunText`, falling back to a full re-serialize (said on stderr) only when the line-level
