@@ -347,9 +347,18 @@ line-ending conversion for them.
   that one file is rewritten — nothing else is touched.
 - **Editor** — click a card for a split view: structured metadata form (with a
   raw-YAML toggle) on the left, Markdown editor/preview on the right. An unsaved
-  indicator shows pending changes; save with the **Save** button or **Ctrl+S**
+  indicator shows pending changes; **Save** writes the file and closes the
+  editor (it stays open if the save fails), **Ctrl+S** writes it and keeps the
+  editor open
   (pending edits are also flushed automatically when you switch items or close).
   Only the single file is written; field order and unknown fields are preserved.
+  Dragging the card you have open to another column updates the editor too: with
+  no unsaved edits it simply shows the new status; with unsaved edits only the
+  changed field is merged in (a notice says so), and a field you edited yourself
+  is left as you typed it. If a save fails, or the raw YAML does not parse,
+  leaving the item (another card, a context document, **New work item**,
+  **Refresh**, Esc or ✕) asks **Save / Discard / Cancel** instead of dropping
+  your edits; Cancel (or Esc) keeps them exactly as they were.
 - **Create** — make a new item from a template in `templates/`; the next
   zero-padded `TYPE-000000` id is generated automatically, from this clone's
   own ID block when the repository allocates in blocks (see below).
