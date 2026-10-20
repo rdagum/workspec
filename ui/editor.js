@@ -14,12 +14,21 @@
 // safety net so edits are never lost. Field order and unknown fields are
 // preserved by always working from a clone of the source `meta` and only
 // overwriting the keys the form manages.
+//
+// The working copy is bound to one record at one `version` (state/store.js).
+// When that record changes behind the editor's back (a drag/drop move of the
+// open card) the copy is reloaded if clean, or has only the changed keys merged
+// in if dirty, so a later save can never write a stale value back. Leaving the
+// item (another card, Escape, reload...) goes through `leave()`: a save that
+// fails or cannot be attempted asks Save / Discard / Cancel instead of dropping
+// the buffer.
 
 (function (WS) {
 'use strict';
 
 const { el, clear, renderMarkdown } = WS;
-const { stringifyYaml, parseYaml, splitDocument } = WS;
+const { stringifyYaml, parseYaml, splitDocument, patchScalarLine } = WS;
+const { mergeWorkingCopy } = WS;
 const { validateItem, REQUIRED_FIELDS } = WS;
 const { detailDisplay, isEpic } = WS;
 const { itemUsage, runsOf, runCost, runTokens, resolveBudget, usageIssues, formatUsd, formatTokens, TOKEN_KINDS } = WS;
@@ -61,6 +70,7 @@ const TOKEN_COLUMNS = [
 ];
 
 const isMapping = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const clone = (v) => JSON.parse(JSON.stringify(v));
 const localToday = () => {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -74,8 +84,14 @@ const ARRAY_FIELDS = new Set([
 ]);
 
 class EditorView {
-  constructor(store) {
+  /**
+   * `confirmLeave({ id, reason })` asks the user what to do with edits that
+   * could not be saved and resolves 'save' | 'discard' | 'cancel'. Without one
+   * the editor cancels: it never discards on its own.
+   */
+  constructor(store, { confirmLeave } = {}) {
     this.store = store;
+    this.confirmLeave = confirmLeave || (async () => 'cancel');
     this.root = el('aside', { class: 'editor', id: 'editor' });
     const prefs = loadPrefs();
     this.rawMode = !!prefs.rawMode;
@@ -83,6 +99,11 @@ class EditorView {
     this.tab = ['body', 'usage'].includes(prefs.tab) ? prefs.tab : 'meta'; // only used by the floating layout
     this._dirty = false; // unsaved edits in the working copy
     this._path = null;
+    this._version = undefined; // record.version the working copy was last in sync with
+    this._base = null; // { meta, body } of the record at that version: what a merge compares against
+    this._notice = null; // shown in the validation strip after an external change was merged
+    this._saving = false; // our own save is in flight; its version bump is not an external change
+    this._saveError = ''; // why the last save() returned false
   }
 
   _savePrefs() {
@@ -90,26 +111,111 @@ class EditorView {
   }
 
   _bind(record) {
-    // (Re)load working copy when a different item is opened. `rawMode` and
-    // `preview` are sticky view preferences — preserved across items so that,
-    // e.g., choosing Markdown "Preview" keeps applying to the next card opened.
-    if (this._path !== record.path) {
-      this._path = record.path;
-      this.meta = JSON.parse(JSON.stringify(record.meta || {}));
-      this.body = record.body || '';
-      this._rawText = null; // per-item raw buffer; rebuild from the new meta
-      this._rawError = null;
-      this._dirty = false;
-      // A lossy record (core/parser.js round-trip guard) is edited as its own
-      // front-matter text, never as a form re-serialized from `meta`, and the
-      // store saves that text verbatim.
-      this._lossy = !!record.lossy;
-      this._rawEdited = false;
-      if (this._lossy) {
-        const { frontMatter } = splitDocument(record.raw || '');
-        this._rawText = frontMatter == null ? '' : frontMatter;
-      }
+    if (this._path !== record.path) return this._load(record);
+    if (this._version === record.version) return;
+    // The open record changed behind the editor (a drag/drop move, another
+    // save): a clean working copy just reloads from it, a dirty one takes only
+    // the keys that change touched.
+    if (this._dirty) this._merge(record);
+    else this._load(record);
+  }
+
+  /**
+   * (Re)load the working copy from a record: a different item was opened, or
+   * the same one changed while the copy had no edits. `rawMode` and `preview`
+   * are sticky view preferences — preserved across items so that, e.g.,
+   * choosing Markdown "Preview" keeps applying to the next card opened.
+   */
+  _load(record) {
+    this._path = record.path;
+    this._adopt(record);
+    this.meta = clone(record.meta || {});
+    this.body = record.body || '';
+    this._rawText = null; // per-item raw buffer; rebuild from the new meta
+    this._rawError = null;
+    this._dirty = false;
+    this._notice = null;
+    // A lossy record (core/parser.js round-trip guard) is edited as its own
+    // front-matter text, never as a form re-serialized from `meta`, and the
+    // store saves that text verbatim.
+    this._lossy = !!record.lossy;
+    this._rawEdited = false;
+    if (this._lossy) {
+      const { frontMatter } = splitDocument(record.raw || '');
+      this._rawText = frontMatter == null ? '' : frontMatter;
     }
+  }
+
+  /** Remember which version of the record the working copy is in sync with. */
+  _adopt(record) {
+    this._version = record.version;
+    this._base = { meta: clone(record.meta || {}), body: record.body || '' };
+  }
+
+  /**
+   * The record changed while the working copy has unsaved edits. Take the keys
+   * that change touched and the user did not, keep every key the user edited
+   * (see mergeWorkingCopy), and say what happened in the validation strip.
+   */
+  _merge(record) {
+    const id = this._label();
+    if (this._lossy) {
+      // A lossy record is edited as raw text, which has no keys to merge by.
+      this._version = record.version;
+      this._notice = `${id} changed elsewhere. Your unsaved raw YAML is kept; saving it overwrites that change.`;
+      return;
+    }
+    const { meta, body, applied, kept } = mergeWorkingCopy(
+      this._base,
+      { meta: this.meta, body: this.body },
+      { meta: record.meta || {}, body: record.body || '' }
+    );
+    const unmerged = this._syncRaw(meta, applied, record);
+    this.meta = meta;
+    this.body = body;
+    this._adopt(record);
+    const parts = [];
+    const merged = applied.filter((k) => !unmerged.includes(k));
+    if (merged.length) parts.push(`${merged.join(', ')} ${merged.length === 1 ? 'was' : 'were'} merged into your edits`);
+    if (kept.length) parts.push(`your unsaved edit of ${kept.join(', ')} was kept, so saving overwrites the change`);
+    if (unmerged.length) {
+      parts.push(`${unmerged.join(', ')} could not be applied to the YAML you are editing; set ${unmerged.length === 1 ? 'it' : 'them'} again`);
+    }
+    this._notice = parts.length ? `Changed elsewhere: ${parts.join('; ')}.` : null;
+  }
+
+  /**
+   * Bring the raw-YAML buffer in line with a merged working copy. A buffer
+   * that parses is regenerated from the merged `meta`. One that does not parse
+   * keeps the user's text: scalar keys are patched into it line by line, and
+   * any key that cannot be is returned so the notice can say so.
+   */
+  _syncRaw(meta, applied, record) {
+    const keys = applied.filter((k) => k !== 'body');
+    if (this._rawText == null || !keys.length) return [];
+    if (!this._rawError) {
+      this._rawText = stringifyYaml(meta);
+      return [];
+    }
+    const scalar = (v) => v === null || v === undefined || typeof v !== 'object';
+    const unmerged = [];
+    for (const key of keys) {
+      const value = (record.meta || {})[key];
+      const wrapped = `---\n${this._rawText}\n---\n`;
+      const patched = scalar(value) && scalar(this._base.meta[key]) && key in (record.meta || {})
+        ? patchScalarLine(wrapped, key, value)
+        : null;
+      if (patched == null) {
+        unmerged.push(key);
+        continue;
+      }
+      this._rawText = patched.slice('---\n'.length, -'\n---\n'.length);
+    }
+    return unmerged;
+  }
+
+  _label() {
+    return String((this.meta && this.meta.id) || (this._path || '').split('/').pop());
   }
 
   /** Raw YAML is the only metadata view of a lossy record. */
@@ -122,6 +228,7 @@ class EditorView {
     clear(this.root);
     if (!record) {
       this.root.classList.remove('open');
+      this.reset(); // no item is open, so there is no working copy to keep
       return this.root;
     }
     this._bind(record);
@@ -139,6 +246,19 @@ class EditorView {
       this.root.append(el('div', { class: 'editor-panes' }, [this._metaPane(), this._bodyPane()]));
     }
     return this.root;
+  }
+
+  /**
+   * Called by the app on every store change that does not switch items: when
+   * the open record has moved to a version this editor has not seen, rebind or
+   * merge and redraw. The editor's own save is skipped; it adopts its version
+   * itself once the write has finished.
+   */
+  sync() {
+    if (this._saving) return;
+    const record = this.store.selectedItem();
+    if (!record || record.path !== this._path || record.version === this._version) return;
+    this.render();
   }
 
   /**
@@ -250,6 +370,7 @@ class EditorView {
       validateItem(record, this.store.model.workflow);
       if (this._lossy) record.warnings.unshift(LOSSY_NOTE);
     }
+    if (this._notice) record.warnings.unshift(this._notice);
     if (this._rawError) record.errors.unshift(`YAML: ${this._rawError}`);
     if (!record.errors.length && !record.warnings.length) return el('div', { class: 'validation ok', text: '' });
     const box = el('div', { class: 'validation ' + (record.errors.length ? 'has-error' : 'has-warn') });
@@ -720,38 +841,72 @@ class EditorView {
     if (btn) btn.disabled = !this._dirty;
   }
 
-  /** Persist the working copy to the single file (PROMPT.md §5.2). */
+  /**
+   * Persist the working copy to the single file (PROMPT.md §5.2). Resolves
+   * true when the edits are on disk (or there was nothing to write) and false
+   * when they are not: the write failed or the raw YAML does not parse. The
+   * buffer is kept either way; `_saveError` says why a save did not happen.
+   */
   async save() {
-    if (!this._dirty) return;
+    if (!this._dirty) return true;
     if (this._rawError) {
+      this._saveError = `the YAML does not parse (${this._rawError})`;
       this.store.set({ message: 'Cannot save: YAML has errors.' });
-      return;
+      return false;
     }
+    this._saving = true;
     try {
       const raw = this._lossy ? this._rawText : null; // the store writes it verbatim
-      await this.store.saveItem(this._path, JSON.parse(JSON.stringify(this.meta)), this.body, raw);
+      const record = await this.store.saveItem(this._path, clone(this.meta), this.body, raw);
       this._dirty = false;
+      this._notice = null;
+      this._saveError = '';
       if (this._lossy) {
         // The store re-parsed the file (it may no longer be lossy); rebind to it.
         this._path = null;
         this.render();
-        return;
+        return true;
       }
+      this._adopt(record);
       this._refreshStatus();
+      return true;
     } catch (err) {
+      this._saveError = err.message;
       this.store.set({ message: `Save failed: ${err.message}` });
+      return false;
+    } finally {
+      this._saving = false;
     }
   }
 
+  /**
+   * Make the open item safe to leave. Resolves true when nothing is lost by
+   * moving on: there were no edits, they were saved, or the user chose to
+   * discard them. Resolves false when the user cancelled; the buffer is kept
+   * and the caller must not navigate.
+   */
+  async leave() {
+    while (!(await this.save())) {
+      const choice = await this.confirmLeave({ id: this._label(), reason: this._saveError });
+      if (choice === 'discard') {
+        this.reset();
+        return true;
+      }
+      if (choice !== 'save') return false;
+    }
+    return true;
+  }
+
+  /** Close the editor (✕, Escape, backdrop) unless leaving the item was cancelled. */
   async _closeGuard() {
-    // Safety net: persist pending edits on close so nothing is lost.
-    if (this._dirty && !this._rawError) await this.save();
+    if (!(await this.leave())) return false;
     this.store.close();
+    return true;
   }
 
   /** Focus the board on this epic; the floating modal covers the board, so close it first. */
   async _focusEpic(record) {
-    if (detailDisplay(this.store.model) === 'floating') await this._closeGuard();
+    if (detailDisplay(this.store.model) === 'floating' && !(await this._closeGuard())) return;
     this.store.setFilter('epic', String(record.meta.id));
   }
 
@@ -760,11 +915,16 @@ class EditorView {
     if (this.store.state.selectedPath) await this._closeGuard();
   }
 
-  /** Drop the working copy so the next open rebinds from a fresh record (used on reload). */
+  /** Drop the working copy so the next open rebinds from a fresh record. */
   reset() {
     this._path = null;
+    this._version = undefined;
+    this._base = null;
     this._dirty = false;
+    this._rawText = null;
     this._rawError = null;
+    this._notice = null;
+    this._saveError = '';
   }
 }
 

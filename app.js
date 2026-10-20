@@ -19,14 +19,16 @@ const { allocateId, allocationState, allocationProblemMessage, describeBlock, RE
 const { CANONICAL_ORDER } = WS;
 
 const store = new Store();
-const editor = new EditorView(store);
-// Flush unsaved edits to the currently open item before switching/creating, so
-// navigation never silently drops changes.
+const editor = new EditorView(store, { confirmLeave: promptUnsaved });
+// Make the currently open item safe to leave before switching, creating or
+// reloading: its edits are saved, or the user chose to discard them. Resolves
+// false when they chose to stay (or could not save); the caller must then stop
+// and leave the buffer alone, so navigation never silently drops changes.
 async function flushOpenEditor() {
-  if (store.state.selectedPath) await editor.save();
+  return store.state.selectedPath ? editor.leave() : true;
 }
 async function openItem(path) {
-  if (store.state.selectedPath && store.state.selectedPath !== path) await flushOpenEditor();
+  if (store.state.selectedPath && store.state.selectedPath !== path && !(await flushOpenEditor())) return;
   store.open(path);
 }
 const board = new BoardView(store, {
@@ -39,7 +41,7 @@ const board = new BoardView(store, {
 const sidebar = new SidebarView(store, {
   onNewItem: () => openCreateDialog(),
   onOpenContext: async (path) => {
-    await flushOpenEditor();
+    if (!(await flushOpenEditor())) return;
     store.openContext(path);
   },
 });
@@ -80,6 +82,10 @@ store.subscribe((state) => {
   if (editorKey !== lastEditorKey) {
     refs.editorMount.replaceChildren(editor.render());
     lastEditorKey = editorKey;
+  } else {
+    // Same item still open: it may have moved to a new version underneath the
+    // editor (dragged to another column), which the editor reloads or merges.
+    editor.sync();
   }
   renderContextOverlay();
   if (!refs.openMenu.hidden) renderOpenMenu();
@@ -270,8 +276,8 @@ function closeOpenMenu() {
 // (no re-pick). Pending edits are saved first so a reload never loses them.
 async function refreshRepository() {
   if (!store.state.fs) return;
+  if (!(await flushOpenEditor())) return;
   try {
-    await flushOpenEditor();
     store.set({ status: 'loading' });
     const model = await loadRepository(store.state.fs);
     applyTheme(model.local && model.local.theme);
@@ -479,7 +485,7 @@ async function createItem(template, title) {
       showToast(`${id} already exists.`, 5000);
       return;
     }
-    await flushOpenEditor(); // don't lose edits on the currently open item
+    if (!(await flushOpenEditor())) return; // don't lose edits on the currently open item
     await store.addItem(path, meta, body);
     closeOverlay();
   } catch (err) {
@@ -649,21 +655,76 @@ function restoreBoardScroll(scroll) {
 
 // --- Overlay & toast plumbing ----------------------------------------------
 
-function showOverlay(content, { keepContext = false } = {}) {
+// Called when the overlay is closed without using one of its own buttons
+// (Escape, a click outside it), so a dialog that is awaiting an answer can
+// treat that as Cancel.
+let overlayDismiss = null;
+
+function showOverlay(content, { keepContext = false, onDismiss = null } = {}) {
   clear(refs.overlay);
   refs.overlay.append(content);
   refs.overlay.classList.add('open');
   if (!keepContext) refs.overlay.dataset.context = '';
+  overlayDismiss = onDismiss;
   refs.overlay.onclick = (e) => {
     if (e.target === refs.overlay) closeOverlay();
   };
 }
 
 function closeOverlay() {
+  const dismiss = overlayDismiss;
+  overlayDismiss = null;
   refs.overlay.classList.remove('open');
   clear(refs.overlay);
   refs.overlay.dataset.context = '';
   if (store.state.contextPath) store.closeContext();
+  if (dismiss) dismiss();
+}
+
+/**
+ * The open editor could not save its edits and the user is about to leave the
+ * item (STORY-000002): ask what to do. Resolves 'save' | 'discard' | 'cancel';
+ * Cancel, Escape and a click outside the dialog all mean cancel. It is layered
+ * over whatever overlay is already showing (the create dialog, say) and puts
+ * that back afterwards, so cancelling loses nothing there either.
+ */
+function promptUnsaved({ id, reason }) {
+  return new Promise((resolve) => {
+    const before = {
+      nodes: Array.from(refs.overlay.childNodes),
+      open: refs.overlay.classList.contains('open'),
+      context: refs.overlay.dataset.context || '',
+      dismiss: overlayDismiss,
+    };
+    const finish = (choice) => {
+      overlayDismiss = null;
+      if (before.open) {
+        clear(refs.overlay);
+        refs.overlay.append(...before.nodes);
+        refs.overlay.classList.add('open');
+        refs.overlay.dataset.context = before.context;
+        overlayDismiss = before.dismiss;
+      } else {
+        closeOverlay();
+      }
+      resolve(choice);
+    };
+    const saveBtn = el('button', { class: 'btn-primary', onclick: () => finish('save'), text: 'Save' });
+    showOverlay(
+      el('div', { class: 'modal' }, [
+        el('h2', { text: 'Unsaved changes' }),
+        el('p', { text: `${id} has changes that could not be saved: ${reason || 'unknown error'}.` }),
+        el('p', { text: 'Save tries again, Discard throws the edits away, Cancel stays on the item with them.' }),
+        el('div', { class: 'modal-actions' }, [
+          el('button', { class: 'btn-link', onclick: () => finish('cancel'), text: 'Cancel' }),
+          el('button', { class: 'btn-danger', onclick: () => finish('discard'), text: 'Discard' }),
+          saveBtn,
+        ]),
+      ]),
+      { onDismiss: () => finish('cancel') }
+    );
+    saveBtn.focus();
+  });
 }
 
 let toastTimer = null;
