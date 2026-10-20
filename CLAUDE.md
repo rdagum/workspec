@@ -64,8 +64,8 @@ core/usage.js     AI usage (SPEC.md §18.2): agent.runs / budget_usd, config/ai.
 core/model.js     loadRepository(fs) -> the whole in-memory model; buildColumns, sortItems
 core/filesystem.js  browser File System Access backend (all app I/O goes through it)
 core/recent.js    IndexedDB-backed list of previously opened repositories
-state/store.js    observable store: filters, selection, dirty flag, and every mutation
-                  (saveItem, moveItem, addItem, deleteItem, claimIdBlock)
+state/store.js    observable store: filters, selection, record versions, and every mutation
+                  (saveItem, moveItem, addItem, deleteItem, claimIdBlock); mergeWorkingCopy
 ui/*.js           board (drag/drop), editor (split metadata/Markdown), sidebar, dom helpers
 app.js            wiring only: render loop, dialogs, keyboard, toasts, theme, recent repos
 ```
@@ -78,6 +78,7 @@ These are the guarantees the whole design exists to provide. Violating one is a 
 
 - **Field order and unknown fields survive a save.** `meta` is an insertion-ordered object; `serializeItem` emits whatever order it holds. `CANONICAL_ORDER` in `core/parser.js` applies only to brand-new items.
 - **Only the edited file is rewritten.** No batch normalization, ever.
+- **The open editor never goes stale.** Every record has a `version` that `saveItem`, `moveItem`, `addItem` and a reload advance; `ui/editor.js` rebinds or merges when it changes, and anything that would drop the working copy asks `editor.leave()` first. The store keeps no dirty flag of its own.
 - **Drag/drop is a surgical single-line patch** of `status:` via `patchScalarLine`, leaving the file byte-identical otherwise.
 - **Parsing never throws.** Errors land on `record.errors` so one bad file cannot stop the board from loading the rest (`PROMPT.md` §11).
 - **The filename equals the ID** (`SPEC.md` §7.2) — a mismatch is an error, not a warning.
