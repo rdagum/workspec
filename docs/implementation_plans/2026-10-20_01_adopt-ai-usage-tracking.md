@@ -66,5 +66,5 @@ Part of the story has already landed outside a run, so the plan covers only what
   picked by the selector; Step 6 records with `tools/record-usage.js` when the repository ships it and
   `record_usage.py` otherwise; "When the run cannot finish" records usage too, before the draft PR.
 - [x] 6. Backlog: file a bug in the Opus block for `record_usage.py`'s cache-write pricing.
-- [ ] 7. This run's own record via `tools/record-usage.js` on STORY-001004. That covers the definition-of-done check that
+- [x] 7. This run's own record via `tools/record-usage.js` on STORY-001004. That covers the definition-of-done check that
   a routine run's branch carries its run and `usage-report.js` shows it.
