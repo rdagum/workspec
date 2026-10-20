@@ -22,4 +22,5 @@ pricing:
 defaults:
   budget_usd: { STORY: 10, BUG: 5, TASK: 3, SPIKE: 5 }
 policy:
-  require_usage: false
+  require_usage: true
+  require_usage_from: Review
