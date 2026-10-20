@@ -47,24 +47,24 @@ Part of the story has already landed outside a run, so the plan covers only what
 
 ## Steps
 
-- [ ] 1. Configuration: `ai.yaml` `policy: { require_usage: true, require_usage_from: Review }`; `users.yaml` gives
+- [x] 1. Configuration: `ai.yaml` `policy: { require_usage: true, require_usage_from: Review }`; `users.yaml` gives
   Fable, Opus and Sonnet `kind: agent` and their `model`. Check: the validator reports no `missing-usage` warning, since
   every agent-assigned item in Review or Done carries runs.
-- [ ] 2. Backfill: `agent:` / `runs: []` before `spec_version` in STORY-000003, BUG-000001 and STORY-000009, and a note
+- [x] 2. Backfill: `agent:` / `runs: []` before `spec_version` in STORY-000003, BUG-000001 and STORY-000009, and a note
   in each body. Check: `usage-report.js` reports each item with `runs: 0`, and the round-trip tests still pass.
-- [ ] 3. Gates skill: restore the WorkSpec text from 2012a11^ in its own commit, then add an "AI usage" section: the
+- [x] 3. Gates skill: restore the WorkSpec text from 2012a11^ in its own commit, then add an "AI usage" section: the
   pre-run budget check (`node tools/usage-report.js <ID> --json`, stop when `remaining <= 0`) and the post-run record
   (`node tools/record-usage.js <ID> --from-transcript=<session> --ref=<PR>`, subagents included by default), with the
   open-question decision above. Refresh the "currently reports" counts.
-- [ ] 4. Selector budget gate: `select_item.sh` skips a candidate whose `tools/usage-report.js <ID> --json` reports
+- [x] 4. Selector budget gate: `select_item.sh` skips a candidate whose `tools/usage-report.js <ID> --json` reports
   `remaining` at or below zero, reason `over budget ($spent of $budget)`, reading the `.workspec` of
   `origin/<integration>` (exported to a temp directory) the same way the selector reads statuses. Without
   `tools/usage-report.js` or `node`, the gate is skipped. Tests in `test_select_item.sh`: over budget is skipped, under
   budget is picked, no tool means no gate.
-- [ ] 5. Routine text (`workspec-daily-work/SKILL.md`): the selector bullet and report line for "over budget"; a hard rule
+- [x] 5. Routine text (`workspec-daily-work/SKILL.md`): the selector bullet and report line for "over budget"; a hard rule
   never to start an item whose budget is spent, with the `[over budget]` draft PR for an item named directly rather than
   picked by the selector; Step 6 records with `tools/record-usage.js` when the repository ships it and
   `record_usage.py` otherwise; "When the run cannot finish" records usage too, before the draft PR.
-- [ ] 6. Backlog: file a bug in the Opus block for `record_usage.py`'s cache-write pricing.
+- [x] 6. Backlog: file a bug in the Opus block for `record_usage.py`'s cache-write pricing.
 - [ ] 7. This run's own record via `tools/record-usage.js` on STORY-001004. That covers the definition-of-done check that
   a routine run's branch carries its run and `usage-report.js` shows it.

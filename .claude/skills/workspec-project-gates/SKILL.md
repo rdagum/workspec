@@ -58,7 +58,7 @@ node tools/validate-workspec.js .workspec
 ```
 
 For reference, a clean tree currently reports `517 tests, 0 fail` and
-`OK: 22 item(s), 0 error(s), 2 warning(s)`. The two warnings are STORY-000001 and
+`OK: 23 item(s), 0 error(s), 2 warning(s)`. The two warnings are STORY-000001 and
 STORY-000002, which are Done and genuinely over budget; they are expected, so
 do not "fix" them by raising a budget.
 
