@@ -7,8 +7,8 @@ allowed-tools: Bash, Read, Glob, Grep
 # WorkSpec: Worktree Provisioning and Quality Gates
 
 This is the project-specific half of the WorkSpec routines. The generic process
-lives in the personal `daily-workspec` and `address-pr-feedback` skills; every
-command below is this repository's own.
+lives in the `workspec-daily-work` and `workspec-address-pr-feedback` skills;
+every command below is this repository's own.
 
 The shape of this project matters for everything here: it is a **zero-dependency
 static browser app**. No `package.json`, no build step, no backend, no API and no
@@ -57,8 +57,10 @@ node --test
 node tools/validate-workspec.js .workspec
 ```
 
-For reference, a clean tree currently reports `258 tests, 0 fail` and
-`OK: 14 item(s), 0 error(s), 0 warning(s)`.
+For reference, a clean tree currently reports `517 tests, 0 fail` and
+`OK: 22 item(s), 0 error(s), 2 warning(s)`. The two warnings are STORY-000001 and
+STORY-000002, which are Done and genuinely over budget; they are expected, so
+do not "fix" them by raising a budget.
 
 `node --test` discovers `test/*.test.js`. To run one file while iterating:
 `node --test test/yaml.test.js`.
@@ -157,6 +159,59 @@ uncommitted claim looks exactly like no claim at all from inside a worktree.
 `tools/renumber.js` is the sanctioned repair when a collision does happen, and
 only on the side that has not reached main: ids already on main are immutable
 and the branch adapts.
+
+## AI usage: the budget check and the run record
+
+This repository tracks what each item cost its agents (`SPEC.md` §18.2, README
+"Tracking AI usage") and requires it: `config/ai.yaml` sets
+`policy.require_usage` from `Review`, so an item assigned to an agent
+(`kind: agent` in `users.yaml`) that reaches Review without an `agent.runs` key
+is a validator warning. Both tools below ship in `tools/` and load the
+repository through the board's own loader, so their numbers are the board's.
+
+**Before starting an item, check its budget:**
+
+```bash
+node tools/usage-report.js <ID> --json
+```
+
+Read `spent`, `budget` and `remaining`. When `remaining` is at or below zero the
+budget is spent: do not start. `select_item.sh` already applies this gate and
+skips such an item as "over budget", so it matters when you are pointed at an
+item directly. An item with no runs reports `spent: 0`; `remaining` is `null`
+when the item has no budget (none is set for EPIC), which never blocks.
+
+**After the work, on every exit path, record the session's runs:**
+
+```bash
+node tools/record-usage.js <ID> --from-transcript=<session-uuid> --ref=<PR url> --dry-run
+node tools/record-usage.js <ID> --from-transcript=<session-uuid> --ref=<PR url>
+```
+
+The session uuid is the directory before `scratchpad` in the session's
+scratchpad path. The tool looks for it under every `~/.claude/projects/`
+directory named after this repository, worktree ones included, and sums the
+session's `subagents/` transcripts as well, one run per model, so an Opus
+subagent working under a Fable orchestrator is its own run. Cache writes are
+split into five-minute and one-hour kinds, which are priced differently. The
+append is a line-level edit that leaves `updated` and every other line alone.
+
+Record **once**, as the last commit on the feature branch after the PR exists,
+so `--ref` can name it. The tool refuses a second run with the same `source`,
+`session` and `model`, so a second invocation is an error, not an update. Use
+`--branch=<feature branch>` only when you cannot name the session and pass a
+transcript path instead; with a session id, the rows from before the branch
+existed (selection, the claim) belong to the run too.
+
+Why record inside the session (STORY-001004 settled this): the transcript on
+disk already holds every finished turn, and what follows the record is only a
+push and a status commit. A `SessionEnd` hook would have to commit to a branch
+after the PR is open, and a "next run records the previous one" scheme lands
+the record a day late on whatever branch that run is on.
+
+If the repository's tools are missing (another project, or an old branch), the
+routine's own `record_usage.py` is the fallback; see `workspec-daily-work`
+Step 6.
 
 ## Release bookkeeping
 
