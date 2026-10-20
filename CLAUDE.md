@@ -29,6 +29,11 @@ node tools/validate-workspec.js --strict     # warnings fail too
 node tools/renumber.js STORY-000014 STORY-002001 --dry-run  # show the plan
 node tools/renumber.js STORY-000014 STORY-002001 --body     # apply, incl. Markdown mentions
 
+node tools/usage-report.js STORY-001002 --json              # item spent/budget/remaining (the pre-run gate); --strict exits 1 if over budget
+node tools/usage-report.js --by=status --since=2026-10-01   # repository totals; --by=status|assignee|model|type|label|epic
+node tools/record-usage.js STORY-001002 --from-transcript=SESSION_ID --dry-run   # runs from a Claude Code transcript (+ subagents); drop --dry-run to append
+node tools/record-usage.js STORY-001002 --handle=Opus --model=claude-opus-5-5 --output=8000   # one run by hand
+
 git config core.hooksPath .githooks   # once per clone: pre-commit validates the *staged* .workspec
 ```
 
@@ -58,8 +63,8 @@ core/parser.js    parseItem / validateItem / serializeItem / changeStatus; also 
 core/allocation.js  ID blocks: registry parsing, allocateId, claim/lowestFreeBlock,
                   cross-file validateRepository, and renumberPlan/rewriteReferences
 core/usage.js     AI usage (SPEC.md §18.2): agent.runs / budget_usd, config/ai.yaml pricing,
-                  itemUsage (cost, tokens, budget state), summarize/rollup (parent roll-up,
-                  cycle-safe), appendRunText (line-level run append), validateUsage
+                  itemUsage/itemSpend (cost, tokens, budget state), summarize/summarizeBy/rollup
+                  (grouping, parent roll-up, cycle-safe), appendRunText (line-level run append), validateUsage
                   (invalid-usage errors, usage warnings on record.warnings); pure
 core/model.js     loadRepository(fs) -> the whole in-memory model; buildColumns, sortItems
 core/filesystem.js  browser File System Access backend (all app I/O goes through it)

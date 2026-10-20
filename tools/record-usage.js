@@ -70,7 +70,7 @@ function usage() {
     '',
     'From a Claude Code transcript (one run per model, source claude-code):',
     '  --from-transcript=X   a session .jsonl file, or a session ID looked up under',
-    '                        $CLAUDE_CONFIG_DIR or ~/.claude /projects for this repository',
+    '                        $CLAUDE_CONFIG_DIR or ~/.claude, under projects/, for this repository',
     '  --no-subagents        leave out <session>/subagents/agent-*.jsonl',
     '  --since=DATE --until=DATE --branch=NAME',
     '                        keep only those rows; trimming any marks the runs estimated',

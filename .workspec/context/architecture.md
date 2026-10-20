@@ -27,12 +27,17 @@ fixture there. Run with `node --test`.
 
 ## Command-line tools (Node, zero dependencies, outside the layers)
 
-`tools/validate-workspec.js` and `tools/renumber.js` load the unchanged
+`tools/validate-workspec.js`, `tools/renumber.js`, `tools/record-usage.js` and
+`tools/usage-report.js` load the unchanged
 browser modules through `test/load.js` and drive `loadRepository` with the
 Node filesystem adapter in `tools/lib.js`, so they can never disagree with the
 board about what a file means. The validator runs from `.githooks/pre-commit`
 (staged tree) and from `.github/workflows/validate-workspec.yml` (pull-request
-merge result). Keep every check in `core/`; the tools only print and exit.
+merge result). Keep every check in `core/`; the tools only print and exit. The
+usage tools follow the same rule: all cost, budget, grouping and append logic is
+in `core/usage.js`. The one Claude-specific piece, the Claude Code transcript
+reader, is `tools/transcript.js` (Node-only, every field name in one table, a row
+it does not understand is skipped), so a change to that format touches one file.
 
 ## Invariants to preserve
 

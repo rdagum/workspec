@@ -42,7 +42,7 @@ that lacks `message.usage` treated as a skip rather than a crash.
   `updated` unchanged, unknown ID, duplicate refusal and `--force`, the transcript fixture (dedup, synthetic skip,
   subagents, `--no-subagents`, `--branch` → `estimated`, `--item-from-branch`, session-id lookup through
   `CLAUDE_CONFIG_DIR`), flow-style fallback with its stderr note, and the report's text and `--json` shapes with `--strict`.
-- [ ] 6. Docs: README "Tracking AI usage" (real commands, one real sample report, replace the "ship with STORY-001002" note),
+- [x] 6. Docs: README "Tracking AI usage" (real commands, one real sample report, replace the "ship with STORY-001002" note),
   README project layout, CLAUDE.md Commands block and module list, `.workspec/context/architecture.md` tools paragraph.
   Full gates; dogfood both tools on this item.
 
