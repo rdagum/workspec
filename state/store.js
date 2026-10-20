@@ -1,8 +1,13 @@
 // state/store.js
 //
 // A tiny observable store. Holds the loaded model plus view state (filters,
-// selection, dirty flags) and notifies subscribers on change. No framework,
-// no magic — just a value bag and a listener set.
+// selection) and notifies subscribers on change. No framework, no magic — just
+// a value bag and a listener set.
+//
+// Every record carries a `version` (STORY-000002). Saves, drag/drop moves,
+// creates and reloads advance it, so a view holding a copy of a record can tell
+// that the record moved on without it. Dirtiness of the open editor is the
+// editor's own (ui/editor.js); the store keeps no second flag for it.
 //
 // Performance note (PROMPT.md §8): edits mutate the single affected record in
 // place; the board re-derives columns from the existing item map rather than
@@ -24,6 +29,71 @@ const emptyFilters = () => ({ text: '', type: '', status: '', priority: '', assi
 // in an ID, so it never collides with a real epic.
 const NO_EPIC = '(none)';
 
+// --- Record versions (STORY-000002) -------------------------------------------
+
+/** Advance a record's version: its content changed behind whoever holds a copy. */
+function bump(record) {
+  record.version = (record.version || 0) + 1;
+}
+
+/**
+ * Give every record of a freshly loaded model a version one past the record
+ * it replaces at the same path (1 for a path that is new), so an editor that
+ * kept an item open across a reload sees a different version than before.
+ */
+function stampVersions(next, previous) {
+  for (const record of next.items.values()) {
+    const old = previous && previous.items ? previous.items.get(record.path) : null;
+    record.version = ((old && old.version) || 0) + 1;
+  }
+}
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+
+/**
+ * Three-way merge of an editor's working copy with the record it was bound to,
+ * after that record changed elsewhere (a drag/drop move, another save).
+ *
+ *   base     { meta, body } the working copy was last in sync with
+ *   working  { meta, body } what the user has now
+ *   incoming { meta, body } what the record holds now
+ *
+ * Only keys the external change touched (incoming differs from base) are
+ * considered. Of those, a key the user did not touch takes the incoming value;
+ * a key the user also edited keeps the user's value and is reported in `kept`,
+ * so text being typed is never overwritten. `applied` lists the keys taken
+ * (`body` stands for the Markdown). None of the arguments is mutated.
+ */
+function mergeWorkingCopy(base, working, incoming) {
+  const meta = clone(working.meta || {});
+  let body = working.body;
+  const applied = [];
+  const kept = [];
+  const baseMeta = base.meta || {};
+  const incomingMeta = incoming.meta || {};
+  const take = (key, apply) => {
+    // Called only for a key the external change touched.
+    const mine = key === 'body' ? working.body : (working.meta || {})[key];
+    const origin = key === 'body' ? base.body : baseMeta[key];
+    if (!same(mine, origin)) {
+      kept.push(key);
+    } else {
+      apply();
+      applied.push(key);
+    }
+  };
+  for (const key of new Set([...Object.keys(baseMeta), ...Object.keys(incomingMeta)])) {
+    if (same(baseMeta[key], incomingMeta[key])) continue;
+    take(key, () => {
+      if (key in incomingMeta) meta[key] = clone(incomingMeta[key]);
+      else delete meta[key];
+    });
+  }
+  if (!same(base.body, incoming.body)) take('body', () => { body = incoming.body; });
+  return { meta, body, applied, kept };
+}
+
 class Store {
   constructor() {
     this.state = {
@@ -33,7 +103,6 @@ class Store {
       sort: { field: '', direction: 'desc' }, // configured via board.yaml
       selectedPath: null, // open editor target
       contextPath: null, // open context doc
-      dirty: false, // unsaved edits in the open editor
       status: 'idle', // idle | loading | ready | error
       message: '',
       usagePeriod: 'all', // sidebar AI usage period: all | 7d | 30d | month
@@ -57,6 +126,7 @@ class Store {
   }
 
   set(patch) {
+    if (patch.model && patch.model !== this.state.model) stampVersions(patch.model, this.state.model);
     Object.assign(this.state, patch);
     // Saves, creates and deletes mutate records before calling set(); drop the
     // cached epic index so the prune below sees them.
@@ -284,11 +354,11 @@ class Store {
   }
 
   open(path) {
-    this.set({ selectedPath: path, contextPath: null, dirty: false });
+    this.set({ selectedPath: path, contextPath: null });
   }
 
   close() {
-    this.set({ selectedPath: null, dirty: false });
+    this.set({ selectedPath: null });
   }
 
   openContext(path) {
@@ -321,7 +391,8 @@ class Store {
     record.errors = [];
     record.warnings = [];
     validateItem(record, this.model.workflow);
-    this.set({ dirty: false, message: `Saved ${meta.id || record.fileName}` });
+    bump(record);
+    this.set({ message: `Saved ${meta.id || record.fileName}` });
     return record;
   }
 
@@ -335,7 +406,8 @@ class Store {
     validateItem(fresh, this.model.workflow);
     for (const key of ['raw', 'meta', 'body', 'warnings', 'lossy']) record[key] = fresh[key];
     record.errors = [...new Set(fresh.errors)];
-    this.set({ dirty: false, message: `Saved ${record.meta.id || record.fileName}` });
+    bump(record);
+    this.set({ message: `Saved ${record.meta.id || record.fileName}` });
     return record;
   }
 
@@ -353,6 +425,7 @@ class Store {
     record.meta = { ...record.meta, status: newStatus };
     validateItem(record, this.model.workflow);
     record.errors = [...new Set(record.errors)];
+    bump(record);
     this.emit();
     return true;
   }
@@ -370,11 +443,12 @@ class Store {
       errors: [],
       warnings: [],
       lossy: false, // written by serializeItem, so it round-trips by construction
+      version: 1,
     };
     validateItem(record, this.model.workflow);
     this.model.items.set(path, record);
     if (meta.id && !this.model.itemsById.has(meta.id)) this.model.itemsById.set(meta.id, record);
-    this.set({ selectedPath: path, dirty: false, message: `Created ${meta.id}` });
+    this.set({ selectedPath: path, message: `Created ${meta.id}` });
     return record;
   }
 
@@ -425,5 +499,5 @@ class Store {
   }
 }
 
-Object.assign(WS, { Store, NO_EPIC });
+Object.assign(WS, { Store, NO_EPIC, mergeWorkingCopy });
 })(window.WS = window.WS || {});
